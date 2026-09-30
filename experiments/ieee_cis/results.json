@@ -1,0 +1,93 @@
+{
+  "benchmark": "IEEE-CIS Fraud Detection External Validation",
+  "split_summary": {
+    "train_total": 105000,
+    "train_fraud": 2649,
+    "val_total": 22500,
+    "val_fraud": 500,
+    "test_total": 22500,
+    "test_fraud": 821
+  },
+  "features_evaluated_count": 41,
+  "features_evaluated": [
+    "TransactionAmt",
+    "log_amount",
+    "is_round_amount",
+    "high_amount_flag",
+    "hour_of_day",
+    "day_of_week",
+    "has_identity",
+    "C1",
+    "C2",
+    "C3",
+    "C4",
+    "C5",
+    "C6",
+    "C7",
+    "C8",
+    "C9",
+    "C10",
+    "C11",
+    "C12",
+    "C13",
+    "C14",
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7",
+    "D8",
+    "D9",
+    "D10",
+    "D11",
+    "D12",
+    "D13",
+    "D14",
+    "D15",
+    "card1_freq",
+    "card2_freq",
+    "addr1_freq",
+    "ProductCD_freq",
+    "DeviceType_freq"
+  ],
+  "models": {
+    "logistic_regression": {
+      "model_name": "Logistic Regression Baseline",
+      "roc_auc": 0.7739,
+      "pr_auc": 0.1881,
+      "at_threshold_0.50": {
+        "precision": 0.0824,
+        "recall": 0.6906,
+        "f1": 0.1472,
+        "fpr": 0.2914
+      },
+      "optimal_f1": {
+        "threshold": 0.7009,
+        "precision": 0.2284,
+        "recall": 0.3216,
+        "f1": 0.2671,
+        "fpr": 0.0411
+      }
+    },
+    "xgboost": {
+      "model_name": "XGBoost Classifier",
+      "roc_auc": 0.8879,
+      "pr_auc": 0.5493,
+      "at_threshold_0.50": {
+        "precision": 0.249,
+        "recall": 0.6918,
+        "f1": 0.3662,
+        "fpr": 0.079
+      },
+      "optimal_f1": {
+        "threshold": 0.8293,
+        "precision": 0.6784,
+        "recall": 0.4446,
+        "f1": 0.5372,
+        "fpr": 0.008
+      }
+    }
+  }
+}

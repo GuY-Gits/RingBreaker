@@ -129,9 +129,9 @@ const riskColor = (risk: number): string => {
   const mid = d3.rgb(234, 179, 8);
   const high = d3.rgb(239, 68, 68);
   if (t < 0.5) {
-    return d3.interpolateRgb(low, mid)(t * 2).formatHex();
+    return d3.interpolateRgb(low, mid)(t * 2);
   }
-  return d3.interpolateRgb(mid, high)((t - 0.5) * 2).formatHex();
+  return d3.interpolateRgb(mid, high)((t - 0.5) * 2);
 };
 
 const edgeKey = (source: string, target: string) => `${source}->${target}`;

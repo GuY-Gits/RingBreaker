@@ -1,3 +1,13 @@
+import os
+import sys
+
+if sys.platform == "darwin":
+    _libomp_path = "/opt/homebrew/opt/libomp/lib"
+    if os.path.exists(_libomp_path):
+        _cur = os.environ.get("DYLD_LIBRARY_PATH", "")
+        if _libomp_path not in _cur:
+            os.environ["DYLD_LIBRARY_PATH"] = f"{_libomp_path}:{_cur}" if _cur else _libomp_path
+
 from ringbreaker.features.flow import account_flow_features
 from ringbreaker.features.graph_metrics import (
     account_graph_metrics,
