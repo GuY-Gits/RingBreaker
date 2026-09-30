@@ -7,7 +7,8 @@ This branch implements **F3–F8** (P0) and **F15** (P1) for RingBreaker. It doe
 | Path | Feature |
 | --- | --- |
 | `ringbreaker/graphs/build.py` | F3 transaction graph, F4 identity-fragment graph |
-| `ringbreaker/graph_metrics.py` | supporting as-of graph metrics (no label leakage) |
+| `ringbreaker/graph_metrics.py` | supporting as-of graph metrics (no label leakage, also at `ringbreaker/features/graph_metrics.py`) |
+| `ringbreaker/features/graph_metrics.py` | PRD layout path for graph metrics |
 | `ringbreaker/features/flow.py` | F5 dwell time and pass-through |
 | `ringbreaker/features/social.py` | F6 reciprocity, shared neighbours, first-time payee |
 | `ringbreaker/features/lifelike.py` | F7 lifelikeness score |
@@ -19,7 +20,7 @@ This branch implements **F3–F8** (P0) and **F15** (P1) for RingBreaker. It doe
 | `ringbreaker/patterns/result.py` | shared serializable pattern payload |
 | `scripts/person2_demo.py` | end-to-end printout |
 
-PRD listed `graph_metrics.py` under `features/`; this branch keeps a single module at `ringbreaker/graph_metrics.py` so Person 1 can `from ringbreaker.graph_metrics import ...`.
+PRD listed `graph_metrics.py` under `features/`; this repository provides `ringbreaker/features/graph_metrics.py` matching the PRD and also exposes `ringbreaker/graph_metrics.py` for backward compatibility.
 
 ## Expected input schemas (Person 3)
 
@@ -244,4 +245,4 @@ python scripts/person2_demo.py
 - Identity links without `observed_at` are treated as known from the beginning of time.
 - Pass-through is a volume ratio, not traced bills.
 - Named detectors report **structure**, not guilt.
-- `graph_metrics.py` lives at package root, not under `features/`.
+- `graph_metrics.py` is available at both `ringbreaker/features/graph_metrics.py` (per PRD) and `ringbreaker/graph_metrics.py`.

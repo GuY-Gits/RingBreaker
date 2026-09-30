@@ -23,12 +23,13 @@ MAX_PATHS_PER_SOURCE = 50
 
 def detect_pass_through_chains(
     graph: TransactionGraph,
-    as_of: datetime | str,
+    as_of: datetime | str | None = None,
     exclude_transaction_id: str | None = None,
     min_accounts: int = DEFAULT_MIN_ACCOUNTS,
     max_accounts: int = DEFAULT_MAX_ACCOUNTS,
     window: timedelta = DEFAULT_WINDOW,
-    amount_slack: float = 0.15,
+    amount_slack: float | None = 0.15,
+    maximal_only: bool = False,
 ) -> list[PatternResult]:
     """Detect ordered payment paths A -> B -> ... of length min..max accounts."""
     payments = graph.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
@@ -56,10 +57,28 @@ def detect_pass_through_chains(
             if key in seen:
                 continue
             seen.add(key)
-            results.append(_to_result(path_payments, window))
+            results.append(_to_result(path_payments, window, as_of))
             found += 1
             if found >= MAX_PATHS_PER_SOURCE:
                 break
+    if maximal_only and results:
+        all_members = [tuple(r.members) for r in results]
+        filtered = []
+        for r in results:
+            m = tuple(r.members)
+            # Check if m is a strict sub-slice of any other chain
+            is_sub = False
+            for other in all_members:
+                if len(other) > len(m):
+                    for i in range(len(other) - len(m) + 1):
+                        if other[i : i + len(m)] == m:
+                            is_sub = True
+                            break
+                if is_sub:
+                    break
+            if not is_sub:
+                filtered.append(r)
+        return filtered
     return results
 
 
@@ -69,7 +88,7 @@ def _walk(
     min_hops: int,
     max_hops: int,
     window: timedelta,
-    amount_slack: float,
+    amount_slack: float | None,
 ) -> Iterator[list[Payment]]:
     stack: list[tuple[list[Payment], set[str]]] = []
     for first in by_sender.get(source, []):
@@ -94,11 +113,13 @@ def _walk(
             stack.append((path + [nxt], used | {nxt.receiver}))
 
 
-def _amount_ok(prev: Payment, nxt: Payment, slack: float) -> bool:
-    """Allow the next hop to send up to (1+slack) of the previous amount."""
-    if prev.amount <= 0:
+def _amount_ok(prev: Payment, nxt: Payment, slack: float | None) -> bool:
+    """Allow the next hop to be within slack of the previous amount."""
+    if prev.amount <= 0 or nxt.amount <= 0:
         return False
-    return nxt.amount <= prev.amount * (1.0 + slack) + 1e-9
+    if slack is None:
+        return True
+    return (1.0 - slack) * prev.amount - 1e-9 <= nxt.amount <= (1.0 + slack) * prev.amount + 1e-9
 
 
 def _members(path: list[Payment]) -> list[str]:
@@ -108,7 +129,9 @@ def _members(path: list[Payment]) -> list[str]:
     return accounts
 
 
-def _to_result(path: list[Payment], window: timedelta) -> PatternResult:
+def _to_result(
+    path: list[Payment], window: timedelta, as_of: Any = None
+) -> PatternResult:
     members = _members(path)
     roles = {
         "source": members[0],
@@ -141,5 +164,6 @@ def _to_result(path: list[Payment], window: timedelta) -> PatternResult:
             "window_seconds": window.total_seconds(),
             "duration_seconds": span,
             "transactions": evidence_tx,
+            "as_of": as_of,
         },
     )

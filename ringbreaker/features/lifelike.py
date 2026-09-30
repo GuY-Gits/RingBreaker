@@ -45,7 +45,7 @@ def account_lifelikeness(
     history = graph.get_account_history(
         account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
     )
-    signup = graph.get_signup_at(account_id)
+    signup = graph.get_signup_at(account_id, as_of=as_of_ts)
     if signup is None and history:
         signup = min(p.timestamp for p in history)
     if signup is None:

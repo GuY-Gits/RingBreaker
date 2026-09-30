@@ -20,7 +20,7 @@ DEFAULT_WINDOW = timedelta(hours=24)
 
 def detect_fan_in_collectors(
     graph: TransactionGraph,
-    as_of: datetime | str,
+    as_of: datetime | str | None = None,
     exclude_transaction_id: str | None = None,
     min_senders: int = DEFAULT_MIN_SENDERS,
     window: timedelta = DEFAULT_WINDOW,

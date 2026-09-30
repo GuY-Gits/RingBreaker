@@ -88,6 +88,8 @@ class TransactionGraph:
     def __init__(self) -> None:
         self.graph = nx.MultiDiGraph()
         self._payments: list[Payment] = []
+        self._incoming: dict[str, list[Payment]] = {}
+        self._outgoing: dict[str, list[Payment]] = {}
         self._signup_at: dict[str, datetime] = {}
         self._edge_key = 0
 
@@ -106,8 +108,17 @@ class TransactionGraph:
         for key, value in attrs.items():
             self.graph.nodes[account_id][key] = value
 
-    def get_signup_at(self, account_id: str) -> datetime | None:
-        return self._signup_at.get(str(account_id))
+    def get_signup_at(
+        self, account_id: str, as_of: datetime | str | None = None
+    ) -> datetime | None:
+        signup = self._signup_at.get(str(account_id))
+        if signup is None:
+            return None
+        if as_of is not None:
+            cutoff = _as_of_or_max(as_of)
+            if cutoff is not None and signup > cutoff:
+                return None
+        return signup
 
     def add_payment(
         self,
@@ -144,6 +155,8 @@ class TransactionGraph:
             **extra,
         )
         self._payments.append(payment)
+        self._incoming.setdefault(receiver, []).append(payment)
+        self._outgoing.setdefault(sender, []).append(payment)
         return payment
 
     def payments(
@@ -173,8 +186,10 @@ class TransactionGraph:
         account_id = str(account_id)
         seen: list[str] = []
         found: set[str] = set()
-        for payment in self.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id):
-            if payment.sender == account_id and payment.receiver not in found:
+        for payment in self.outgoing_payments(
+            account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        ):
+            if payment.receiver not in found:
                 found.add(payment.receiver)
                 seen.append(payment.receiver)
         return seen
@@ -188,8 +203,10 @@ class TransactionGraph:
         account_id = str(account_id)
         seen: list[str] = []
         found: set[str] = set()
-        for payment in self.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id):
-            if payment.receiver == account_id and payment.sender not in found:
+        for payment in self.incoming_payments(
+            account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        ):
+            if payment.sender not in found:
                 found.add(payment.sender)
                 seen.append(payment.sender)
         return seen
@@ -222,10 +239,13 @@ class TransactionGraph:
     ) -> list[Payment]:
         sender = str(sender)
         receiver = str(receiver)
+        cutoff = _as_of_or_max(as_of)
         return [
             p
-            for p in self.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
-            if p.sender == sender and p.receiver == receiver
+            for p in self._outgoing.get(sender, [])
+            if p.receiver == receiver
+            and _visible(p.timestamp, cutoff)
+            and (exclude_transaction_id is None or p.transaction_id != exclude_transaction_id)
         ]
 
     def get_transactions_between(
@@ -237,11 +257,22 @@ class TransactionGraph:
     ) -> list[Payment]:
         """Payments in either direction between two accounts."""
         a, b = str(account_a), str(account_b)
-        return [
+        cutoff = _as_of_or_max(as_of)
+        res = [
             p
-            for p in self.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
-            if {p.sender, p.receiver} == {a, b}
+            for p in self._outgoing.get(a, [])
+            if p.receiver == b
+            and _visible(p.timestamp, cutoff)
+            and (exclude_transaction_id is None or p.transaction_id != exclude_transaction_id)
+        ] + [
+            p
+            for p in self._outgoing.get(b, [])
+            if p.receiver == a
+            and _visible(p.timestamp, cutoff)
+            and (exclude_transaction_id is None or p.transaction_id != exclude_transaction_id)
         ]
+        res.sort(key=lambda p: p.timestamp)
+        return res
 
     def get_account_history(
         self,
@@ -250,11 +281,15 @@ class TransactionGraph:
         exclude_transaction_id: str | None = None,
     ) -> list[Payment]:
         account_id = str(account_id)
-        return [
-            p
-            for p in self.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
-            if p.sender == account_id or p.receiver == account_id
-        ]
+        inc = self.incoming_payments(
+            account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        )
+        out = self.outgoing_payments(
+            account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        )
+        merged = inc + out
+        merged.sort(key=lambda p: p.timestamp)
+        return merged
 
     def incoming_payments(
         self,
@@ -263,10 +298,12 @@ class TransactionGraph:
         exclude_transaction_id: str | None = None,
     ) -> list[Payment]:
         account_id = str(account_id)
+        cutoff = _as_of_or_max(as_of)
         return [
             p
-            for p in self.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
-            if p.receiver == account_id
+            for p in self._incoming.get(account_id, [])
+            if _visible(p.timestamp, cutoff)
+            and (exclude_transaction_id is None or p.transaction_id != exclude_transaction_id)
         ]
 
     def outgoing_payments(
@@ -276,10 +313,12 @@ class TransactionGraph:
         exclude_transaction_id: str | None = None,
     ) -> list[Payment]:
         account_id = str(account_id)
+        cutoff = _as_of_or_max(as_of)
         return [
             p
-            for p in self.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
-            if p.sender == account_id
+            for p in self._outgoing.get(account_id, [])
+            if _visible(p.timestamp, cutoff)
+            and (exclude_transaction_id is None or p.transaction_id != exclude_transaction_id)
         ]
 
     def as_of_digraph(
@@ -348,8 +387,19 @@ class TransactionGraph:
         graph = self.as_of_digraph(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
         return serialize_digraph(graph)
 
-    def account_ids(self) -> list[str]:
-        return [n for n, data in self.graph.nodes(data=True) if data.get("kind") == "account"]
+    def account_ids(self, as_of: datetime | str | None = None) -> list[str]:
+        all_accounts = [n for n, data in self.graph.nodes(data=True) if data.get("kind") == "account"]
+        if as_of is None:
+            return all_accounts
+        cutoff = _as_of_or_max(as_of)
+        visible: list[str] = []
+        for acc in all_accounts:
+            signup = self.get_signup_at(acc, as_of=cutoff)
+            if signup is not None:
+                visible.append(acc)
+            elif self.incoming_payments(acc, as_of=cutoff) or self.outgoing_payments(acc, as_of=cutoff):
+                visible.append(acc)
+        return visible
 
 
 class IdentityGraph:
@@ -505,6 +555,42 @@ class IdentityGraph:
         as_of: datetime | str | None = None,
     ) -> list[str]:
         return self.get_accounts_for_identity("device", device_id, as_of=as_of)
+
+    def get_shared_phone_cluster(
+        self,
+        phone: str,
+        as_of: datetime | str | None = None,
+    ) -> list[str]:
+        return self.get_accounts_for_identity("phone", phone, as_of=as_of)
+
+    def get_shared_ip_cluster(
+        self,
+        ip: str,
+        as_of: datetime | str | None = None,
+    ) -> list[str]:
+        return self.get_accounts_for_identity("ip", ip, as_of=as_of)
+
+    def get_shared_address_cluster(
+        self,
+        address: str,
+        as_of: datetime | str | None = None,
+    ) -> list[str]:
+        return self.get_accounts_for_identity("address", address, as_of=as_of)
+
+    def as_of_graph(self, as_of: datetime | str | None = None) -> nx.Graph:
+        """Build NetworkX bipartite Graph of visible accounts and identity fragments."""
+        graph = nx.Graph()
+        for acc, itype, ivalue in self._visible_links(as_of=as_of):
+            ident_id = identity_node_id(itype, ivalue)
+            graph.add_node(acc, kind="account")
+            graph.add_node(
+                ident_id,
+                kind="identity",
+                identity_type=itype,
+                identity_value=ivalue,
+            )
+            graph.add_edge(acc, ident_id, identity_type=itype)
+        return graph
 
     def identity_clusters(
         self,

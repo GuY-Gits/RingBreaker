@@ -38,7 +38,7 @@ def _star_from_cluster(
 ) -> PatternResult:
     itype = cluster["identity_type"]
     ivalue = cluster["identity_value"]
-    members = list(cluster["members"])
+    members = sorted(cluster["members"])
     ident_id = identity_node_id(itype, ivalue)
     sub = nx.Graph()
     sub.add_node(
