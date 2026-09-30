@@ -58,7 +58,8 @@ class RiskEngine:
         pair_risk: float,
         behavioural_anomaly: float,
         coordination_score: float = 0.0,
-        graph_risk: Optional[float] = None
+        graph_risk: Optional[float] = None,
+        sub_scores: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         overall = (
             self.pair_weight * pair_risk +
@@ -66,14 +67,23 @@ class RiskEngine:
             self.lockstep_weight * coordination_score
         )
         overall = float(np.clip(overall, 0.0, 1.0))
-        action = determine_action(overall)
+        if sub_scores is None:
+            sub_scores = {
+                "sender_anomaly": float(behavioural_anomaly),
+                "receiver_mule_propensity": float(pair_risk),
+                "relationship_plausibility": float(coordination_score),
+            }
+        action = determine_action(overall, sub_scores)
 
         return {
             "transaction_id": payment.get("transaction_id", "UNKNOWN"),
             "risk_score": round(overall, 4),
+            "overall_risk": round(overall, 4),
+            "risk_percent": round(overall * 100.0, 2),
             "pair_risk": round(float(pair_risk), 4),
             "behavioural_anomaly": round(float(behavioural_anomaly), 4),
             "coordination_score": round(float(coordination_score), 4),
+            "sub_scores": sub_scores,
             "action": action
         }
 

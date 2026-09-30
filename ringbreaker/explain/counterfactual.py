@@ -13,10 +13,12 @@ SUB_SCORE_KEYS = ("sender_anomaly", "receiver_mule_propensity", "relationship_pl
 
 # Index in the ladder at or above which we flag (aligned with default action thresholds)
 DEFAULT_THRESHOLDS = {
+    "ALLOW": 0.0,
+    "REVIEW": 0.30,
+    "BLOCK": 0.70,
     "allow": 0.0,
-    "warn_sender": 0.35,
-    "hold_receiver": 0.55,
-    "block": 0.75,
+    "review": 0.30,
+    "block": 0.70,
 }
 
 
@@ -29,25 +31,21 @@ def _action_from_sub_scores(
     combined_risk: float,
     thresholds: Dict[str, float],
 ) -> str:
-    """Mirror F11: dominant sub-score drives the action ladder."""
-    dominant = _dominant_sub_score(sub_scores)
-    score = float(sub_scores.get(dominant, combined_risk))
-
-    if score >= thresholds["block"]:
-        return "block"
-    if score >= thresholds["hold_receiver"]:
-        return "hold_receiver" if dominant == "receiver_mule_propensity" else "hold_receiver"
-    if score >= thresholds["warn_sender"]:
-        return "warn_sender" if dominant in ("sender_anomaly", "relationship_plausibility") else "hold_receiver"
-    return "allow"
+    """Derive action from risk using canonical thresholds."""
+    if combined_risk >= thresholds.get("BLOCK", 0.70):
+        return "BLOCK"
+    if combined_risk >= thresholds.get("REVIEW", 0.30):
+        return "REVIEW"
+    return "ALLOW"
 
 
 def _action_ladder_index(action: str) -> int:
-    order = ["allow", "warn_sender", "hold_receiver", "block"]
-    try:
-        return order.index(action)
-    except ValueError:
-        return 0
+    act = str(action).strip().upper()
+    if act == "BLOCK":
+        return 2
+    if act in ("REVIEW", "WARN_SENDER", "HOLD_RECEIVER"):
+        return 1
+    return 0
 
 
 def compute_counterfactual(
@@ -64,7 +62,7 @@ def compute_counterfactual(
     thresholds = thresholds or DEFAULT_THRESHOLDS
     dominant = _dominant_sub_score(sub_scores)
     current = float(sub_scores.get(dominant, combined_risk))
-    current_action = action or _action_from_sub_scores(sub_scores, combined_risk, thresholds)
+    current_action = str(action).upper() if action else _action_from_sub_scores(sub_scores, combined_risk, thresholds)
     current_idx = _action_ladder_index(current_action)
 
     if current_idx == 0:
@@ -74,22 +72,20 @@ def compute_counterfactual(
             "delta_required": 0.0,
             "suggested_change": None,
             "evasion_cost": 0.0,
-            "flipped_action": "allow",
+            "flipped_action": "ALLOW",
         }
 
     target_idx = current_idx - 1
-    order = ["allow", "warn_sender", "hold_receiver", "block"]
+    order = ["ALLOW", "REVIEW", "BLOCK"]
     target_action = order[target_idx]
 
     # Threshold on dominant dimension for target action
-    if target_action == "allow":
-        target_threshold = thresholds["allow"]
-    elif target_action == "warn_sender":
-        target_threshold = thresholds["warn_sender"]
-    elif target_action == "hold_receiver":
-        target_threshold = thresholds["hold_receiver"]
+    if target_action == "ALLOW":
+        target_threshold = thresholds.get("ALLOW", thresholds.get("allow", 0.0))
+    elif target_action == "REVIEW":
+        target_threshold = thresholds.get("REVIEW", thresholds.get("review", 0.30))
     else:
-        target_threshold = thresholds["block"]
+        target_threshold = thresholds.get("BLOCK", thresholds.get("block", 0.70))
 
     delta = max(0.0, current - target_threshold + 1e-6)
     suggested: Dict[str, Any] = {

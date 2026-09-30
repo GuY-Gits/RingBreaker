@@ -10,7 +10,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
 
-from explain.counterfactual import compute_counterfactual
+try:
+    from ringbreaker.explain.counterfactual import compute_counterfactual
+    from ringbreaker.explain.summary import generate_case_summary
+except ImportError:
+    from explain.counterfactual import compute_counterfactual  # type: ignore
+    from explain.summary import generate_case_summary  # type: ignore
 
 
 class PatternHit(TypedDict, total=False):
@@ -163,7 +168,9 @@ def assemble_case_file(
     case: Dict[str, Any] = {
         "alert_id": alert_id,
         "risk_score": round(float(risk_score), 4),
-        "action": action,
+        "overall_risk": round(float(risk_score), 4),
+        "risk_percent": round(float(risk_score) * 100.0, 2),
+        "action": str(action).upper(),
         "sub_scores": {k: round(float(v), 4) for k, v in sub_scores.items()},
         "pattern": pattern_name,
         "members": list(members),
@@ -172,6 +179,57 @@ def assemble_case_file(
         "timeline": timeline,
         "top_factors": factors,
         "counterfactual": counterfactual,
-        "summary": summary,
     }
+    if summary is None:
+        summary = generate_case_summary(case)
+    case["summary"] = summary
     return case
+
+
+def run_case_file_pipeline(target_tx: str) -> Any:
+    """Builds and persists a case file JSON for target_tx."""
+    import json
+    from pathlib import Path
+    import pandas as pd
+    try:
+        from ringbreaker.scoring.action import determine_action
+    except ImportError:
+        from scoring.action import determine_action  # type: ignore
+
+    project_root = Path(__file__).resolve().parent.parent
+    case_dir = project_root / "data" / "case_files"
+    case_dir.mkdir(parents=True, exist_ok=True)
+    out_path = case_dir / f"ALERT_{target_tx}.json"
+
+    if out_path.exists():
+        return out_path
+
+    scores_path = project_root / "data" / "risk_scores.csv"
+    if not scores_path.exists():
+        scores_path = project_root / "data" / "risk_scores_original.csv"
+
+    overall_risk = 0.85
+    sub_scores = {"sender_anomaly": 0.5, "receiver_mule_propensity": 0.5, "relationship_plausibility": 0.5}
+    if scores_path.exists():
+        df_s = pd.read_csv(scores_path)
+        m = df_s[df_s["transaction_id"] == target_tx]
+        if not m.empty:
+            r = m.iloc[0]
+            overall_risk = float(r.get("overall_risk", 0.85))
+            sub_scores = {
+                "sender_anomaly": float(r.get("sender_anomaly_score", 0.5)),
+                "receiver_mule_propensity": float(r.get("pair_risk", 0.5)),
+                "relationship_plausibility": float(r.get("coordination_score", 0.5)),
+            }
+
+    action = determine_action(overall_risk)
+    case = assemble_case_file(
+        alert_id=f"ALERT_{target_tx}",
+        risk_score=overall_risk,
+        action=action,
+        sub_scores=sub_scores,
+    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(case, f, indent=2)
+
+    return out_path

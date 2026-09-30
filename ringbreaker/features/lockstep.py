@@ -9,15 +9,21 @@ DBSCAN on a small as-of feature vector per account:
 
 Clusters are detection signals, not fraud labels. Noise points (DBSCAN -1) are
 omitted. Accounts with no signup and no history are skipped.
+Also provides batch CSV pipeline execution for offline evaluation.
 """
 
 from __future__ import annotations
 
+import os
+import sys
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 from sklearn.cluster import DBSCAN
+from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
 from ringbreaker.graphs.build import TransactionGraph, parse_timestamp
@@ -158,3 +164,30 @@ def account_lockstep_features(
         "lockstep_cluster_score": 0.0,
         "lockstep_cluster_id": -1,
     }
+
+
+# =====================================================================
+# Offline Batch CSV Execution
+# =====================================================================
+
+BEHAVIORAL_FEATURES = [
+    "tx_rate_per_day",
+    "interarrival_log_sec",
+    "burstiness",
+    "hour_entropy",
+    "sin_peak_hour",
+    "cos_peak_hour",
+    "weekend_ratio",
+    "signup_offset_log",
+]
+
+
+def perform_leakage_audit(feature_df: pd.DataFrame) -> bool:
+    """Verifies that no ground-truth fraud or ring labels contaminate the feature set."""
+    forbidden = ["is_fraud", "ring_id", "fraud", "label", "is_mule"]
+    found_violations = [c for c in feature_df.columns if any(f in c.lower() for f in forbidden)]
+    is_fraud_present = "is_fraud" in feature_df.columns
+    ring_id_present = "ring_id" in feature_df.columns
+    if found_violations or is_fraud_present or ring_id_present:
+        raise ValueError(f"CRITICAL LEAKAGE DETECTED: {found_violations}")
+    return True

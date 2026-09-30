@@ -1,0 +1,76 @@
+{
+  "dataset": "IEEE-CIS Fraud Detection Benchmark",
+  "comparison_target": "RingBreaker P2P Fraud Detection Pipeline",
+  "reproducible_features": [
+    {
+      "ringbreaker_feature_category": "Amount Metrics",
+      "ringbreaker_features": ["amount", "log_amount", "is_round_amount", "high_amount_flag"],
+      "ieee_cis_equivalent": ["TransactionAmt", "np.log1p(TransactionAmt)", "TransactionAmt % 1 == 0", "TransactionAmt > 500"],
+      "reproducible": true,
+      "notes": "Exact mathematical equivalence for transaction sizing and round dollar amounts."
+    },
+    {
+      "ringbreaker_feature_category": "Temporal / Time-of-Day",
+      "ringbreaker_features": ["tx_hour", "tx_day_of_week", "is_weekend"],
+      "ieee_cis_equivalent": ["hour_of_day = (TransactionDT // 3600) % 24", "day_of_week = (TransactionDT // (3600 * 24)) % 7"],
+      "reproducible": true,
+      "notes": "TransactionDT is elapsed seconds from a reference point, allowing diurnal and weekly cyclical feature extraction."
+    },
+    {
+      "ringbreaker_feature_category": "Historical Velocity & Burstiness",
+      "ringbreaker_features": ["tx_count_1h", "tx_count_24h", "tx_count_7d", "amount_sum_24h"],
+      "ieee_cis_equivalent": ["C1-C14 counting features", "D1-D15 delta recency features"],
+      "reproducible": true,
+      "notes": "C-columns in IEEE-CIS quantify counting metrics (how many transactions were associated with the card/address). D-columns quantify timedelta from previous transactions."
+    },
+    {
+      "ringbreaker_feature_category": "Device & Identity Telemetry",
+      "ringbreaker_features": ["device_id", "ip_address", "device_reuse_count"],
+      "ieee_cis_equivalent": ["DeviceType", "DeviceInfo", "id_30 (OS)", "id_31 (browser)", "has_identity"],
+      "reproducible": true,
+      "notes": "train_identity.csv contains explicit browser, OS, and device metadata for a subset of transactions."
+    },
+    {
+      "ringbreaker_feature_category": "Account / Entity Frequency",
+      "ringbreaker_features": ["sender_historical_tx_count", "receiver_historical_tx_count"],
+      "ieee_cis_equivalent": ["card1_freq", "card2_freq", "addr1_freq", "ProductCD_freq"],
+      "reproducible": true,
+      "notes": "Frequency encodings learned strictly on historical training split."
+    }
+  ],
+  "non_reproducible_features": [
+    {
+      "ringbreaker_feature_category": "P2P Counterparty Graph",
+      "ringbreaker_features": [
+        "pair_tx_count", "pair_amount_sum", "reciprocity_ratio", 
+        "first_time_counterparty", "counterparty_familiarity_score"
+      ],
+      "reproducible": false,
+      "reason": "IEEE-CIS is card-not-present merchant/e-commerce payment data. There are no distinct P2P 'sender' and 'receiver' counterparty IDs—only a purchaser card and merchant terminal."
+    },
+    {
+      "ringbreaker_feature_category": "Circular Transaction Loops",
+      "ringbreaker_features": ["in_circular_loop", "loop_length", "circular_flow_ratio"],
+      "reproducible": false,
+      "reason": "Circular credit/fund flow (e.g., A -> B -> C -> A) requires directed P2P graph edges. In e-commerce card checkout, money flows unidirectionally from cardholder to merchant."
+    },
+    {
+      "ringbreaker_feature_category": "Fan-In & Fan-Out Graph Centrality",
+      "ringbreaker_features": ["fan_in_ratio", "fan_out_ratio", "pagerank_score", "community_density"],
+      "reproducible": false,
+      "reason": "RingBreaker constructs an explicit directed multigraph of accounts. Fabricating synthetic P2P edges on IEEE-CIS would be academically dishonest and invalidate the benchmark."
+    },
+    {
+      "ringbreaker_feature_category": "Planted Ring Coordination / Lockstep",
+      "ringbreaker_features": ["coordination_score", "temporal_burst_concurrency", "lockstep_variance"],
+      "reproducible": false,
+      "reason": "Lockstep detection requires simultaneous micro-transactions across colluding sender-receiver nodes in a syndicate ring. IEEE-CIS has no ground-truth syndicate labels or multi-node P2P clusters."
+    },
+    {
+      "ringbreaker_feature_category": "Temporal Personalized PageRank Propagation",
+      "ringbreaker_features": ["ppr_propagation_score", "ring_proximity_score"],
+      "reproducible": false,
+      "reason": "Graph propagation algorithms require an interconnected node graph. Without counterparty graph edges, graph diffusion cannot be executed."
+    }
+  ]
+}
