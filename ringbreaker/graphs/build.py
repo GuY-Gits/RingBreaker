@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, Iterator, Optional
+from typing import Any, Iterable, Iterator
 
 import networkx as nx
 
@@ -412,6 +412,11 @@ class IdentityGraph:
     def __init__(self) -> None:
         self.graph = nx.Graph()
         self._links: list[tuple[str, str, str, datetime]] = []
+        # Indexes: one entry per (account, type, value), keeping the earliest
+        # observation time, so as-of lookups do not scan every link.
+        self._first_seen: dict[tuple[str, str, str], datetime] = {}
+        self._by_account: dict[str, list[tuple[str, str]]] = {}
+        self._by_identity: dict[tuple[str, str], list[str]] = {}
 
     def add_account(self, account_id: str) -> None:
         account_id = str(account_id)
@@ -433,6 +438,16 @@ class IdentityGraph:
         identity_type = str(identity_type).lower().strip()
         identity_value = str(identity_value)
         ts = parse_timestamp(observed_at) if observed_at is not None else datetime.min
+        key = (account_id, identity_type, identity_value)
+        known = self._first_seen.get(key)
+        if known is not None:
+            if ts < known:
+                self._first_seen[key] = ts
+                self._links.append((account_id, identity_type, identity_value, ts))
+            return
+        self._first_seen[key] = ts
+        self._by_account.setdefault(account_id, []).append((identity_type, identity_value))
+        self._by_identity.setdefault((identity_type, identity_value), []).append(account_id)
         ident_id = identity_node_id(identity_type, identity_value)
         self.add_account(account_id)
         self.graph.add_node(
@@ -487,17 +502,13 @@ class IdentityGraph:
     ) -> list[dict[str, str]]:
         account_id = str(account_id)
         wanted = None if identity_type is None else identity_type.lower()
+        cutoff = _as_of_or_max(as_of)
         out: list[dict[str, str]] = []
-        seen: set[tuple[str, str]] = set()
-        for acc, itype, ivalue in self._visible_links(as_of=as_of):
-            if acc != account_id:
-                continue
+        for itype, ivalue in self._by_account.get(account_id, []):
             if wanted is not None and itype != wanted:
                 continue
-            key = (itype, ivalue)
-            if key in seen:
+            if not _visible(self._first_seen[(account_id, itype, ivalue)], cutoff):
                 continue
-            seen.add(key)
             out.append({"identity_type": itype, "identity_value": ivalue})
         return out
 
@@ -509,13 +520,12 @@ class IdentityGraph:
     ) -> list[str]:
         identity_type = identity_type.lower()
         identity_value = str(identity_value)
-        accounts: list[str] = []
-        found: set[str] = set()
-        for acc, itype, ivalue in self._visible_links(as_of=as_of):
-            if itype == identity_type and ivalue == identity_value and acc not in found:
-                found.add(acc)
-                accounts.append(acc)
-        return accounts
+        cutoff = _as_of_or_max(as_of)
+        return [
+            acc
+            for acc in self._by_identity.get((identity_type, identity_value), [])
+            if _visible(self._first_seen[(acc, identity_type, identity_value)], cutoff)
+        ]
 
     def get_shared_identities(
         self,

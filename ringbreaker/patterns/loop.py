@@ -1,13 +1,15 @@
 """F8: closed-loop detector.
 
-Bounded directed cycles of length 3–4 (accounts), using DFS from each node on
-the as-of payment graph. Timestamp evidence is attached; cycle membership does
-not require a perfect time order around the loop.
+Bounded directed cycles of 3–6 accounts, using DFS from each node on the as-of
+payment graph. Every payment in a cycle must fall within ``max_span`` of the
+cycle's earliest payment, so slow, benign friend-to-friend round trips spread
+over weeks are not reported as laundering loops. Cycle membership does not
+require a perfect time order around the loop.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterator
 
 import networkx as nx
@@ -16,7 +18,8 @@ from ringbreaker.graphs.build import Payment, TransactionGraph
 from ringbreaker.patterns.result import PatternResult, graph_to_subgraph
 
 DEFAULT_MIN_LENGTH = 3
-DEFAULT_MAX_LENGTH = 4
+DEFAULT_MAX_LENGTH = 6
+DEFAULT_MAX_SPAN = timedelta(hours=48)
 MAX_CYCLES = 200
 
 
@@ -26,6 +29,7 @@ def detect_closed_loops(
     exclude_transaction_id: str | None = None,
     min_length: int = DEFAULT_MIN_LENGTH,
     max_length: int = DEFAULT_MAX_LENGTH,
+    max_span: timedelta | None = DEFAULT_MAX_SPAN,
 ) -> list[PatternResult]:
     payments = graph.payments(as_of=as_of, exclude_transaction_id=exclude_transaction_id)
     adjacency: dict[str, list[Payment]] = {}
@@ -36,7 +40,7 @@ def detect_closed_loops(
     seen: set[tuple[str, ...]] = set()
     for start in sorted(adjacency):
         for cycle_payments in _cycles_from(
-            start, adjacency, min_length=min_length, max_length=max_length
+            start, adjacency, min_length=min_length, max_length=max_length, max_span=max_span
         ):
             members = _canonical(cycle_payments)
             if members in seen:
@@ -53,6 +57,7 @@ def _cycles_from(
     adjacency: dict[str, list[Payment]],
     min_length: int,
     max_length: int,
+    max_span: timedelta | None = DEFAULT_MAX_SPAN,
 ) -> Iterator[list[Payment]]:
     stack: list[tuple[str, list[Payment], set[str]]] = [(start, [], {start})]
     while stack:
@@ -60,6 +65,10 @@ def _cycles_from(
         for payment in adjacency.get(node, []):
             nxt = payment.receiver
             new_path = path + [payment]
+            if max_span is not None and len(new_path) > 1:
+                stamps = [p.timestamp for p in new_path]
+                if max(stamps) - min(stamps) > max_span:
+                    continue
             hops = len(new_path)
             if nxt == start and min_length <= hops <= max_length:
                 yield new_path
@@ -101,6 +110,10 @@ def _to_result(members: list[str], path: list[Payment]) -> PatternResult:
         subgraph=graph_to_subgraph(sub),
         evidence={
             "cycle_length": len(members),
+            "duration_seconds": (
+                max(p.timestamp for p in path) - min(p.timestamp for p in path)
+            ).total_seconds(),
+            "total_amount": sum(p.amount for p in path),
             "transactions": evidence_tx,
         },
     )

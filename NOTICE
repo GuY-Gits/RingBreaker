@@ -16,3 +16,9 @@ Design references consulted but not copied:
   Inspected only as conceptual/algorithmic reference for useful graph statistics
   and ring shapes. No Mule Hunter source was copied. Label-derived features
   (community_fraud_rate, second_hop_fraud_rate) are intentionally not implemented.
+
+Dashboard and engine (October 2026 rebuild): the analyst dashboard
+(dashboard/src), including the D3 network graph, and the runtime engine
+(ringbreaker/engine) are original code. The earlier LedgerZero-derived
+NetworkGraph.tsx has been removed. The dashboard's visual layout took general
+inspiration from a design mock-up; no code or assets were copied from it.

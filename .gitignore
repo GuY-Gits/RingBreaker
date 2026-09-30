@@ -4,12 +4,13 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
-dist/
 build/
 .DS_Store
-data/
-node_modules/
-dashboard/node_modules/
-dashboard/dist/
 .env
 *.local
+node_modules/
+dashboard/dist/
+
+# Runtime artifacts (recreated by the running engine)
+ringbreaker/models/pair_model_retrained.json
+ringbreaker/data/_tmp_*.csv

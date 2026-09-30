@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-09-30T20:49:38.234771+00:00",
+  "baseline": {
+    "payments": 2107,
+    "fraud_payments": 46,
+    "flagged": 41,
+    "precision": 1.0,
+    "recall": 0.8913,
+    "false_positive_rate": 0.0,
+    "tp": 41,
+    "fp": 0,
+    "fn": 5,
+    "per_ring": {
+      "RING_HELDOUT": {
+        "payments": 5,
+        "flagged": 5,
+        "recall": 1.0
+      },
+      "RING_MULE_HO": {
+        "payments": 10,
+        "flagged": 5,
+        "recall": 0.5
+      },
+      "RING_SLEEPER": {
+        "payments": 31,
+        "flagged": 31,
+        "recall": 1.0
+      }
+    },
+    "sleeper_lockstep_first_detected": "2026-03-18T20:28:33",
+    "sleeper_bust_out_start": "2026-03-28 13:03:02",
+    "sleeper_lead_time_hours": 232.6,
+    "latency_ms_p50": 2.75,
+    "latency_ms_p95": 4.29,
+    "confirmed_alert": null
+  },
+  "one_confirmation": {
+    "payments": 2107,
+    "fraud_payments": 46,
+    "flagged": 48,
+    "precision": 0.9583,
+    "recall": 1.0,
+    "false_positive_rate": 0.001,
+    "tp": 46,
+    "fp": 2,
+    "fn": 0,
+    "per_ring": {
+      "RING_HELDOUT": {
+        "payments": 5,
+        "flagged": 5,
+        "recall": 1.0
+      },
+      "RING_MULE_HO": {
+        "payments": 10,
+        "flagged": 10,
+        "recall": 1.0
+      },
+      "RING_SLEEPER": {
+        "payments": 31,
+        "flagged": 31,
+        "recall": 1.0
+      }
+    },
+    "sleeper_lockstep_first_detected": "2026-03-18T20:28:33",
+    "sleeper_bust_out_start": "2026-03-28 13:03:02",
+    "sleeper_lead_time_hours": 232.6,
+    "latency_ms_p50": 2.73,
+    "latency_ms_p95": 4.15,
+    "confirmed_alert": "ALERT_TX_0008416"
+  },
+  "extra_ring_payments_caught_after_confirm": 5
+}
