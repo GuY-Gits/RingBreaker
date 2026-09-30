@@ -30,3 +30,35 @@ def test_no_label_features_present():
     metrics = account_graph_metrics(g, "A", as_of=t0 + timedelta(days=3))
     assert "community_fraud_rate" not in metrics
     assert "second_hop_fraud_rate" not in metrics
+
+
+def test_pagerank_and_clustering_metrics():
+    g, _, t0 = build_fixture()
+    as_of = t0 + timedelta(days=3)
+    a_metrics = account_graph_metrics(g, "A", as_of=as_of)
+    assert "pagerank" in a_metrics
+    assert a_metrics["pagerank"] >= 0.0
+    assert "clustering_coefficient" in a_metrics
+    assert 0.0 <= a_metrics["clustering_coefficient"] <= 1.0
+    assert a_metrics["total_degree"] == a_metrics["in_degree"] + a_metrics["out_degree"]
+    assert a_metrics["total_count"] == a_metrics["in_count"] + a_metrics["out_count"]
+    assert a_metrics["in_amount"] >= 0.0
+    assert a_metrics["out_amount"] >= 0.0
+
+
+def test_neighbourhood_connectivity():
+    from ringbreaker.graph_metrics import neighbourhood_connectivity
+    g, _, t0 = build_fixture()
+    as_of = t0 + timedelta(days=3)
+    conn = neighbourhood_connectivity(g, "A", as_of=as_of)
+    assert conn["node_count"] >= 2
+    assert 0.0 <= conn["undirected_density"] <= 1.0
+
+
+def test_features_graph_metrics_module_import():
+    # Verify both import paths work identically per PRD layout
+    from ringbreaker.features.graph_metrics import account_graph_metrics as agm1
+    from ringbreaker.graph_metrics import account_graph_metrics as agm2
+    g, _, t0 = build_fixture()
+    as_of = t0 + timedelta(days=3)
+    assert agm1(g, "A", as_of=as_of) == agm2(g, "A", as_of=as_of)

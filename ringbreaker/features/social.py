@@ -28,11 +28,17 @@ def pair_social_features(
 ) -> dict[str, Any]:
     sender, receiver = str(sender), str(receiver)
     as_of_ts = parse_timestamp(as_of)
-    prior = graph.get_pair_history(
-        sender, receiver, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+    prior = sorted(
+        graph.get_pair_history(
+            sender, receiver, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        ),
+        key=lambda p: p.timestamp,
     )
-    reverse = graph.get_pair_history(
-        receiver, sender, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+    reverse = sorted(
+        graph.get_pair_history(
+            receiver, sender, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        ),
+        key=lambda p: p.timestamp,
     )
     a_neighbors = set(
         graph.get_neighbors(sender, as_of=as_of, exclude_transaction_id=exclude_transaction_id)
@@ -43,19 +49,27 @@ def pair_social_features(
     a_neighbors.discard(receiver)
     b_neighbors.discard(sender)
     shared = a_neighbors & b_neighbors
+    union_neighbors = a_neighbors | b_neighbors
+    jaccard = (len(shared) / len(union_neighbors)) if union_neighbors else 0.0
+
     if prior:
-        seconds_since = (as_of_ts - prior[-1].timestamp).total_seconds()
-        if seconds_since < 0:
-            seconds_since = 0.0
+        seconds_since = max(0.0, (as_of_ts - prior[-1].timestamp).total_seconds())
+        seconds_since_first = max(0.0, (as_of_ts - prior[0].timestamp).total_seconds())
     else:
         seconds_since = -1.0
+        seconds_since_first = -1.0
+
     return {
         "sender": sender,
         "receiver": receiver,
         "reciprocity": int(bool(reverse)),
         "shared_neighbour_count": len(shared),
+        "shared_neighbour_jaccard": float(jaccard),
         "first_time_payee": int(len(prior) == 0),
         "prior_pair_count": len(prior),
+        "prior_pair_amount": float(sum(p.amount for p in prior)),
         "seconds_since_last_pair": float(seconds_since),
+        "seconds_since_first_pair": float(seconds_since_first),
         "reverse_pair_count": len(reverse),
+        "reverse_pair_amount": float(sum(p.amount for p in reverse)),
     }

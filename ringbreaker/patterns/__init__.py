@@ -19,23 +19,22 @@ def detect_all_patterns(
         found.extend(
             detect_shared_device_stars(identity_graph, as_of=as_of)
         )
-    if as_of is None:
-        return found
-    found.extend(
-        detect_pass_through_chains(
-            transaction_graph, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+    if transaction_graph is not None:
+        found.extend(
+            detect_pass_through_chains(
+                transaction_graph, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+            )
         )
-    )
-    found.extend(
-        detect_fan_in_collectors(
-            transaction_graph, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        found.extend(
+            detect_fan_in_collectors(
+                transaction_graph, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+            )
         )
-    )
-    found.extend(
-        detect_closed_loops(
-            transaction_graph, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        found.extend(
+            detect_closed_loops(
+                transaction_graph, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+            )
         )
-    )
     return found
 
 

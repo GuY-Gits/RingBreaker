@@ -38,11 +38,17 @@ def account_flow_features(
     exclude_transaction_id: str | None = None,
 ) -> dict[str, Any]:
     account_id = str(account_id)
-    incoming = graph.incoming_payments(
-        account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+    incoming = sorted(
+        graph.incoming_payments(
+            account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        ),
+        key=lambda p: p.timestamp,
     )
-    outgoing = graph.outgoing_payments(
-        account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+    outgoing = sorted(
+        graph.outgoing_payments(
+            account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+        ),
+        key=lambda p: p.timestamp,
     )
     in_amt = sum(p.amount for p in incoming)
     out_amt = sum(p.amount for p in outgoing)
@@ -53,12 +59,16 @@ def account_flow_features(
     dwells = _fifo_dwells(incoming, outgoing)
     mean_dwell = 0.0
     median_dwell = 0.0
+    min_dwell = 0.0
+    max_dwell = 0.0
     matched_amount = 0.0
     if dwells:
         matched_amount = sum(amount for _, amount in dwells)
         if matched_amount > 0:
             mean_dwell = sum(seconds * amount for seconds, amount in dwells) / matched_amount
             median_dwell = _weighted_median(dwells)
+            min_dwell = min(s for s, _ in dwells)
+            max_dwell = max(s for s, _ in dwells)
     return {
         "account_id": account_id,
         "incoming_count": len(incoming),
@@ -68,7 +78,10 @@ def account_flow_features(
         "pass_through_ratio": _finite(ratio),
         "mean_dwell_seconds": _finite(mean_dwell),
         "median_dwell_seconds": _finite(median_dwell),
+        "min_dwell_seconds": _finite(min_dwell),
+        "max_dwell_seconds": _finite(max_dwell),
         "matched_pass_through_amount": _finite(matched_amount),
+        "net_flow_amount": _finite(in_amt - out_amt),
     }
 
 

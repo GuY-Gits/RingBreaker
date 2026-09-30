@@ -1,22 +1,41 @@
-from ringbreaker.graphs.build import IdentityGraph, TransactionGraph, parse_timestamp
-from ringbreaker.graph_metrics import account_graph_metrics, pair_graph_metrics
 from ringbreaker.features.flow import account_flow_features
-from ringbreaker.features.social import pair_social_features
+from ringbreaker.features.graph_metrics import (
+    account_graph_metrics,
+    neighbourhood_connectivity,
+    pair_graph_metrics,
+)
 from ringbreaker.features.lifelike import account_lifelikeness
-from ringbreaker.features.lockstep import detect_lockstep
-from ringbreaker.patterns import detect_all_patterns
+from ringbreaker.features.lockstep import account_lockstep_features, detect_lockstep
+from ringbreaker.features.social import pair_social_features
+from ringbreaker.graphs.build import IdentityGraph, Payment, TransactionGraph, parse_timestamp
+from ringbreaker.patterns import (
+    PatternResult,
+    detect_all_patterns,
+    detect_closed_loops,
+    detect_fan_in_collectors,
+    detect_pass_through_chains,
+    detect_shared_device_stars,
+)
 
 __all__ = [
     "IdentityGraph",
     "TransactionGraph",
+    "Payment",
     "parse_timestamp",
     "account_graph_metrics",
     "pair_graph_metrics",
+    "neighbourhood_connectivity",
     "account_flow_features",
     "pair_social_features",
     "account_lifelikeness",
     "detect_lockstep",
+    "account_lockstep_features",
+    "PatternResult",
     "detect_all_patterns",
+    "detect_shared_device_stars",
+    "detect_pass_through_chains",
+    "detect_fan_in_collectors",
+    "detect_closed_loops",
     "sender_features",
     "receiver_features",
     "pair_features",

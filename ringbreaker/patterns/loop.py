@@ -22,7 +22,7 @@ MAX_CYCLES = 200
 
 def detect_closed_loops(
     graph: TransactionGraph,
-    as_of: datetime | str,
+    as_of: datetime | str | None = None,
     exclude_transaction_id: str | None = None,
     min_length: int = DEFAULT_MIN_LENGTH,
     max_length: int = DEFAULT_MAX_LENGTH,

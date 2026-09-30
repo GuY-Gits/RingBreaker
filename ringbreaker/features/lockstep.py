@@ -37,7 +37,7 @@ def account_lockstep_vector(
     history = graph.get_account_history(
         account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
     )
-    signup = graph.get_signup_at(account_id)
+    signup = graph.get_signup_at(account_id, as_of=as_of_ts)
     if signup is None and history:
         signup = min(p.timestamp for p in history)
     if signup is None:
@@ -75,7 +75,7 @@ def detect_lockstep(
     account_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Cluster accounts; return one dict per cluster with size >= min_samples."""
-    ids = account_ids if account_ids is not None else graph.account_ids()
+    ids = account_ids if account_ids is not None else graph.account_ids(as_of=as_of)
     rows: list[tuple[str, dict[str, float]]] = []
     for account_id in ids:
         vector = account_lockstep_vector(
@@ -125,3 +125,36 @@ def detect_lockstep(
             }
         )
     return results
+
+
+def account_lockstep_features(
+    graph: TransactionGraph,
+    account_id: str,
+    as_of: datetime | str,
+    exclude_transaction_id: str | None = None,
+    eps: float = DEFAULT_EPS,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
+) -> dict[str, Any]:
+    """Single-account lockstep membership features for Person 1 scoring models."""
+    account_id = str(account_id)
+    clusters = detect_lockstep(
+        graph,
+        as_of=as_of,
+        exclude_transaction_id=exclude_transaction_id,
+        eps=eps,
+        min_samples=min_samples,
+    )
+    for cluster in clusters:
+        if account_id in cluster["members"]:
+            return {
+                "in_lockstep_cluster": 1,
+                "lockstep_cluster_size": cluster["cluster_size"],
+                "lockstep_cluster_score": cluster["lockstep_score"],
+                "lockstep_cluster_id": cluster["cluster_id"],
+            }
+    return {
+        "in_lockstep_cluster": 0,
+        "lockstep_cluster_size": 0,
+        "lockstep_cluster_score": 0.0,
+        "lockstep_cluster_id": -1,
+    }
