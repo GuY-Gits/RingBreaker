@@ -1,0 +1,25 @@
+{
+  "architecture": "SAGEConv(12 -> 128) -> BatchNorm -> ReLU -> SAGEConv(128 -> 64) -> Linear(64 -> 1)",
+  "embedding_dimension": 64,
+  "node_features": [
+    "tx_count",
+    "incoming_count",
+    "outgoing_count",
+    "unique_counterparties",
+    "in_degree",
+    "out_degree",
+    "total_amount_sent",
+    "total_amount_received",
+    "avg_amount",
+    "pass_through_ratio",
+    "device_reuse_count",
+    "ip_reuse_count"
+  ],
+  "accounts_total": 2000,
+  "training_edges": 7018,
+  "training_fraud_accounts": 23,
+  "epochs": 100,
+  "runtime_seconds": 2.29,
+  "pytorch_version": "2.14.0+cpu",
+  "pytorch_geometric_version": "2.5.3"
+}

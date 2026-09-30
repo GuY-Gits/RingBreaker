@@ -1,0 +1,54 @@
+{
+  "transaction_id": "TX_0001210",
+  "base_value": 0.5743,
+  "risk_increasing_factors": [
+    {
+      "feature": "amount",
+      "shap_value": 2.646699905395508,
+      "feature_value": 3784.42
+    },
+    {
+      "feature": "log_amount",
+      "shap_value": 0.7838000059127808,
+      "feature_value": 8.2389
+    },
+    {
+      "feature": "receiver_account_age_days",
+      "shap_value": 0.46639999747276306,
+      "feature_value": 28.5977
+    },
+    {
+      "feature": "ip_tx_count_before",
+      "shap_value": 0.36660000681877136,
+      "feature_value": 0.0
+    },
+    {
+      "feature": "sender_time_since_last_incoming",
+      "shap_value": 0.1454000025987625,
+      "feature_value": -1.0
+    }
+  ],
+  "risk_reducing_factors": [
+    {
+      "feature": "receiver_tx_count_before",
+      "shap_value": -0.05389999970793724,
+      "feature_value": 2.0
+    },
+    {
+      "feature": "receiver_unique_senders_before",
+      "shap_value": -0.025299999862909317,
+      "feature_value": 2.0
+    },
+    {
+      "feature": "sender_account_age_days",
+      "shap_value": -0.024299999698996544,
+      "feature_value": 15.1217
+    },
+    {
+      "feature": "sender_in_degree_before",
+      "shap_value": -0.022199999541044235,
+      "feature_value": 0.0
+    }
+  ],
+  "all_factors_count": 39
+}

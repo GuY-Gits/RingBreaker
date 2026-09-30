@@ -1,0 +1,130 @@
+{
+  "alert_id": "ALERT_TX_0000308",
+  "transaction_id": "TX_0000308",
+  "timestamp": "2026-01-17 10:23:02",
+  "transaction": {
+    "sender": "U01021",
+    "receiver": "U00632",
+    "amount": 4432.16,
+    "device_id": "DEV_505537",
+    "ip_address": "192.168.46.215"
+  },
+  "account_context": {
+    "sender_profile": {
+      "phone": 919826564560,
+      "address": "Flat 400, Trade Center, Ring Road, Mumbai - 400051",
+      "device_id": "DEV_SHARED_001",
+      "ip_address": "10.0.1.76",
+      "signup_timestamp": "2026-02-08 02:51:32",
+      "user_role": "ring_member"
+    },
+    "receiver_profile": {
+      "phone": 919822267708,
+      "address": "Flat 741, Civil Lines, Chennai - 431485",
+      "device_id": "DEV_162678",
+      "ip_address": "10.0.1.76",
+      "signup_timestamp": "2026-01-12 22:49:17",
+      "user_role": "ring_member"
+    }
+  },
+  "risk": {
+    "pair_risk": 0.9836,
+    "sender_anomaly_score": 0.2908,
+    "receiver_anomaly_score": 0.602,
+    "behavioural_anomaly": 0.602,
+    "sender_coordination_score": 0.8155,
+    "receiver_coordination_score": 0.8056,
+    "coordination_score": 0.8155,
+    "overall_risk": 0.863,
+    "action": "BLOCK",
+    "fusion_formula": "0.60 * pair_risk + 0.25 * behavioural_anomaly + 0.15 * coordination_score"
+  },
+  "evidence": {
+    "risk_increasing_factors": [
+      {
+        "feature": "amount",
+        "shap_value": 2.595599889755249,
+        "feature_value": 4432.16
+      },
+      {
+        "feature": "log_amount",
+        "shap_value": 0.7996000051498413,
+        "feature_value": 8.3969
+      },
+      {
+        "feature": "ip_tx_count_before",
+        "shap_value": 0.3391000032424927,
+        "feature_value": 0.0
+      },
+      {
+        "feature": "day_of_week",
+        "shap_value": 0.20020000636577606,
+        "feature_value": 5.0
+      },
+      {
+        "feature": "day_of_month",
+        "shap_value": 0.0957999974489212,
+        "feature_value": 17.0
+      }
+    ],
+    "risk_reducing_factors": [
+      {
+        "feature": "receiver_account_age_days",
+        "shap_value": -0.5180000066757202,
+        "feature_value": 4.4818
+      },
+      {
+        "feature": "sender_time_since_last_incoming",
+        "shap_value": -0.14249999821186066,
+        "feature_value": -1.0
+      },
+      {
+        "feature": "sender_account_age_days",
+        "shap_value": -0.0640999972820282,
+        "feature_value": 0.0
+      },
+      {
+        "feature": "receiver_tx_last_1h",
+        "shap_value": -0.04580000042915344,
+        "feature_value": 0.0
+      },
+      {
+        "feature": "sender_in_degree_before",
+        "shap_value": -0.0210999995470047,
+        "feature_value": 0.0
+      }
+    ],
+    "behavioural_signals": [
+      "Elevated behavioral anomaly (max EIF score: 0.6020) across counterparties (Sender: 0.2908, Receiver: 0.6020)"
+    ],
+    "network_signals": [
+      "Participating in synchronized lockstep micro-cohort (coordination score: 0.8155, Sender: 0.8155, Receiver: 0.8056)"
+    ]
+  },
+  "ring_context": {
+    "associated_ring_id": "RING_001",
+    "ring_type": "circular_loop",
+    "members": [
+      "U01021",
+      "U00632",
+      "U01513",
+      "U00615"
+    ],
+    "description": "Known demo syndicate association from simulator (RING_001)"
+  },
+  "demo_ground_truth": {
+    "is_fraud_planted": 1,
+    "ring_id_planted": "RING_001",
+    "note": "Ground truth simulator label (evaluation metadata only - was not used for scoring)"
+  },
+  "analyst": {
+    "status": "FALSE_POSITIVE",
+    "available_actions": [
+      "CONFIRM_FRAUD",
+      "MARK_FALSE_POSITIVE"
+    ],
+    "updated_at": "2026-09-30T21:19:47.375651",
+    "marked_false_positive_at": "2026-09-30T21:19:47.360872",
+    "note": "Analyst determined alert is not fraudulent. No model retraining applied."
+  }
+}

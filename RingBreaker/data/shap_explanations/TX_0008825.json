@@ -1,0 +1,138 @@
+{
+  "transaction_id": "TX_0008825",
+  "timestamp": "2026-03-24 15:11:20",
+  "sender": "U00542",
+  "receiver": "U01573",
+  "ring_id": "RING_HELDOUT",
+  "risk_score": 0.9645,
+  "base_value_log_odds": 1.5867,
+  "shap_space": "log_odds (raw margin)",
+  "reconstructed_probability": 0.9645,
+  "math_additivity_check": "PASSED",
+  "top_factors": [
+    {
+      "feature": "amount",
+      "value": 6344.59,
+      "shap_value": 2.7442500591278076,
+      "abs_shap": 2.744253158569336,
+      "direction": "risk_increasing",
+      "description": "Transaction payment amount in INR"
+    },
+    {
+      "feature": "day_of_week",
+      "value": 1.0,
+      "shap_value": -1.305590033531189,
+      "abs_shap": 1.305591106414795,
+      "direction": "risk_reducing",
+      "description": "Day of week (0=Monday, 6=Sunday)"
+    },
+    {
+      "feature": "log_amount",
+      "value": 8.755515362429128,
+      "shap_value": 0.743149995803833,
+      "abs_shap": 0.7431532740592957,
+      "direction": "risk_increasing",
+      "description": "Log-scaled payment amount (squashes extreme variance)"
+    },
+    {
+      "feature": "day_of_month",
+      "value": 24.0,
+      "shap_value": -0.6277099847793579,
+      "abs_shap": 0.6277086138725281,
+      "direction": "risk_reducing",
+      "description": "Day of the month (1-31)"
+    },
+    {
+      "feature": "sender_account_age_days",
+      "value": 79.19793981481482,
+      "shap_value": 0.4728899896144867,
+      "abs_shap": 0.4728870391845703,
+      "direction": "risk_increasing",
+      "description": "Number of days elapsed since sender account registered"
+    }
+  ],
+  "risk_increasing_factors": [
+    {
+      "feature": "amount",
+      "value": 6344.59,
+      "shap_value": 2.7442500591278076,
+      "abs_shap": 2.744253158569336,
+      "direction": "risk_increasing",
+      "description": "Transaction payment amount in INR"
+    },
+    {
+      "feature": "log_amount",
+      "value": 8.755515362429128,
+      "shap_value": 0.743149995803833,
+      "abs_shap": 0.7431532740592957,
+      "direction": "risk_increasing",
+      "description": "Log-scaled payment amount (squashes extreme variance)"
+    },
+    {
+      "feature": "sender_account_age_days",
+      "value": 79.19793981481482,
+      "shap_value": 0.4728899896144867,
+      "abs_shap": 0.4728870391845703,
+      "direction": "risk_increasing",
+      "description": "Number of days elapsed since sender account registered"
+    },
+    {
+      "feature": "ip_tx_count_before",
+      "value": 0.0,
+      "shap_value": 0.3800399899482727,
+      "abs_shap": 0.3800385296344757,
+      "direction": "risk_increasing",
+      "description": "Historical count of all payments originating from this IP address"
+    },
+    {
+      "feature": "receiver_out_degree_before",
+      "value": 0.0,
+      "shap_value": 0.14127999544143677,
+      "abs_shap": 0.14128054678440094,
+      "direction": "risk_increasing",
+      "description": "Historical out-degree: Times receiver previously dispatched money"
+    }
+  ],
+  "risk_reducing_factors": [
+    {
+      "feature": "day_of_week",
+      "value": 1.0,
+      "shap_value": -1.305590033531189,
+      "abs_shap": 1.305591106414795,
+      "direction": "risk_reducing",
+      "description": "Day of week (0=Monday, 6=Sunday)"
+    },
+    {
+      "feature": "day_of_month",
+      "value": 24.0,
+      "shap_value": -0.6277099847793579,
+      "abs_shap": 0.6277086138725281,
+      "direction": "risk_reducing",
+      "description": "Day of the month (1-31)"
+    },
+    {
+      "feature": "receiver_tx_last_1h",
+      "value": 0.0,
+      "shap_value": -0.175369992852211,
+      "abs_shap": 0.17537307739257812,
+      "direction": "risk_reducing",
+      "description": "High velocity check: Payments received in previous 1 hour"
+    },
+    {
+      "feature": "sender_in_degree_before",
+      "value": 0.0,
+      "shap_value": -0.1730699986219406,
+      "abs_shap": 0.17306603491306305,
+      "direction": "risk_reducing",
+      "description": "Historical in-degree: Times sender previously received money"
+    },
+    {
+      "feature": "receiver_avg_amount_before",
+      "value": 0.0,
+      "shap_value": -0.15625999867916107,
+      "abs_shap": 0.1562611311674118,
+      "direction": "risk_reducing",
+      "description": "Historical average amount received by receiver"
+    }
+  ]
+}

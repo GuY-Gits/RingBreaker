@@ -1,0 +1,88 @@
+{
+  "model_type": "N-gram Markov Chain",
+  "order": 2,
+  "smoothing": 1.0,
+  "event_vocabulary": [
+    "IN_SMALL",
+    "IN_MEDIUM",
+    "IN_LARGE",
+    "OUT_SMALL",
+    "OUT_MEDIUM",
+    "OUT_LARGE"
+  ],
+  "amount_buckets": {
+    "small_max": 432.95,
+    "medium_max": 1010.48
+  },
+  "training_metadata": {
+    "training_transactions": 7018,
+    "training_accounts": 1986,
+    "training_start": "2026-01-01 23:41:51",
+    "training_cutoff": "2026-03-12 23:53:26",
+    "distinct_prefixes": 6,
+    "total_transitions_learned": 12050
+  },
+  "normalization_stats": {
+    "ppl_p01": 5.364599743031199,
+    "ppl_median": 5.975801630948622,
+    "ppl_p99": 6.713587085944678
+  },
+  "prefix_counts": {
+    "OUT_LARGE": 1976,
+    "OUT_SMALL": 1999,
+    "IN_SMALL": 2035,
+    "IN_MEDIUM": 2026,
+    "IN_LARGE": 2019,
+    "OUT_MEDIUM": 1995
+  },
+  "transition_counts": {
+    "OUT_LARGE": {
+      "OUT_SMALL": 389,
+      "OUT_MEDIUM": 382,
+      "IN_LARGE": 283,
+      "IN_MEDIUM": 290,
+      "OUT_LARGE": 349,
+      "IN_SMALL": 283
+    },
+    "OUT_SMALL": {
+      "IN_SMALL": 299,
+      "OUT_MEDIUM": 339,
+      "IN_LARGE": 308,
+      "IN_MEDIUM": 334,
+      "OUT_SMALL": 342,
+      "OUT_LARGE": 377
+    },
+    "IN_SMALL": {
+      "IN_MEDIUM": 372,
+      "OUT_SMALL": 290,
+      "IN_LARGE": 379,
+      "OUT_MEDIUM": 308,
+      "IN_SMALL": 362,
+      "OUT_LARGE": 324
+    },
+    "IN_MEDIUM": {
+      "OUT_LARGE": 313,
+      "IN_LARGE": 348,
+      "OUT_MEDIUM": 308,
+      "IN_MEDIUM": 345,
+      "OUT_SMALL": 321,
+      "IN_SMALL": 391
+    },
+    "IN_LARGE": {
+      "OUT_LARGE": 315,
+      "OUT_SMALL": 315,
+      "IN_MEDIUM": 354,
+      "OUT_MEDIUM": 319,
+      "IN_SMALL": 362,
+      "IN_LARGE": 354
+    },
+    "OUT_MEDIUM": {
+      "OUT_MEDIUM": 362,
+      "OUT_SMALL": 351,
+      "OUT_LARGE": 349,
+      "IN_LARGE": 320,
+      "IN_SMALL": 296,
+      "IN_MEDIUM": 317
+    }
+  }
+}

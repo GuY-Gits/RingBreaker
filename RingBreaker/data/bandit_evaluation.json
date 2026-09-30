@@ -1,0 +1,48 @@
+{
+  "evaluation_slice": "Held-Out (15% Chronological)",
+  "transactions_evaluated": 1504,
+  "fraud_transactions": 5,
+  "selected_policy": "aggressive",
+  "learned_thresholds": {
+    "review_threshold": 0.4,
+    "block_threshold": 0.8
+  },
+  "control_thresholds": {
+    "review_threshold": 0.3,
+    "block_threshold": 0.7
+  },
+  "control_metrics": {
+    "policy": "current",
+    "transactions": 1504,
+    "fraud_total": 5,
+    "recall_hard_block": 1.0,
+    "recall_any_flag": 1.0,
+    "precision": 1.0,
+    "f1": 1.0,
+    "fpr": 0.0,
+    "total_reward": 3004.0,
+    "avg_reward_per_tx": 1.9973,
+    "allow_count": 1496,
+    "review_count": 3,
+    "block_count": 5,
+    "false_blocks": 0,
+    "fraud_missed": 0
+  },
+  "bandit_metrics": {
+    "policy": "aggressive",
+    "transactions": 1504,
+    "fraud_total": 5,
+    "recall_hard_block": 1.0,
+    "recall_any_flag": 1.0,
+    "precision": 1.0,
+    "f1": 1.0,
+    "fpr": 0.0,
+    "total_reward": 3010.0,
+    "avg_reward_per_tx": 2.0013,
+    "allow_count": 1498,
+    "review_count": 1,
+    "block_count": 5,
+    "false_blocks": 0,
+    "fraud_missed": 0
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "rings_mutated": [
+    "RING_001",
+    "RING_002",
+    "RING_003",
+    "RING_004",
+    "RING_HELDOUT"
+  ],
+  "variants_per_type": 5,
+  "total_variants_generated": 100,
+  "mutation_types": [
+    "hop_count",
+    "delay",
+    "amount",
+    "device_sharing"
+  ],
+  "original_model_path": "D:\\RingBreaker\\models\\pair_model.json",
+  "redteam_model_path": "D:\\RingBreaker\\models\\pair_model_redteam_retrained.json",
+  "training_samples_before": 7018,
+  "redteam_confirmed_samples_added": 10,
+  "training_samples_after": 7028,
+  "block_recall_before": 0.9,
+  "block_recall_after": 0.8,
+  "detection_recall_before": 0.94,
+  "detection_recall_after": 0.94,
+  "missed_variants_count": 10
+}

@@ -1,0 +1,59 @@
+{
+  "transaction_id": "TX_0001209",
+  "base_value": 0.5743,
+  "risk_increasing_factors": [
+    {
+      "feature": "amount",
+      "shap_value": 2.711400032043457,
+      "feature_value": 4243.71
+    },
+    {
+      "feature": "log_amount",
+      "shap_value": 0.8062999844551086,
+      "feature_value": 8.3534
+    },
+    {
+      "feature": "receiver_account_age_days",
+      "shap_value": 0.3716000020503998,
+      "feature_value": 28.5927
+    },
+    {
+      "feature": "ip_tx_count_before",
+      "shap_value": 0.35929998755455017,
+      "feature_value": 0.0
+    },
+    {
+      "feature": "sender_time_since_last_incoming",
+      "shap_value": 0.12559999525547028,
+      "feature_value": -1.0
+    }
+  ],
+  "risk_reducing_factors": [
+    {
+      "feature": "sender_account_age_days",
+      "shap_value": -0.2662999927997589,
+      "feature_value": 7.5573
+    },
+    {
+      "feature": "receiver_tx_count_before",
+      "shap_value": -0.1615999937057495,
+      "feature_value": 1.0
+    },
+    {
+      "feature": "receiver_tx_last_1h",
+      "shap_value": -0.08649999648332596,
+      "feature_value": 0.0
+    },
+    {
+      "feature": "receiver_unique_senders_before",
+      "shap_value": -0.025299999862909317,
+      "feature_value": 1.0
+    },
+    {
+      "feature": "sender_in_degree_before",
+      "shap_value": -0.021199999377131462,
+      "feature_value": 0.0
+    }
+  ],
+  "all_factors_count": 39
+}

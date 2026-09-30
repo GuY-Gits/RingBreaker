@@ -1,0 +1,64 @@
+{
+  "epsilon": 0.1,
+  "selected_policy": "aggressive",
+  "learned_thresholds": {
+    "review_threshold": 0.4,
+    "block_threshold": 0.8
+  },
+  "reward_definition": {
+    "fraud": {
+      "BLOCK": 3.0,
+      "REVIEW": 2.0,
+      "ALLOW": -5.0
+    },
+    "normal": {
+      "ALLOW": 2.0,
+      "REVIEW": -1.0,
+      "BLOCK": -3.0
+    }
+  },
+  "training_period": {
+    "start": "2026-01-01 23:41:51",
+    "end": "2026-03-12 23:53:26",
+    "transactions": 7018
+  },
+  "validation_period": {
+    "start": "2026-03-13 00:13:48",
+    "end": "2026-03-22 13:32:59",
+    "transactions": 1504,
+    "validation_total_rewards": {
+      "conservative": 2900.0,
+      "current": 3005.0,
+      "aggressive": 3008.0
+    }
+  },
+  "arms": {
+    "conservative": {
+      "count": 254,
+      "total_reward": 494.0,
+      "average_reward": 1.9449,
+      "thresholds": {
+        "review_threshold": 0.2,
+        "block_threshold": 0.6
+      }
+    },
+    "current": {
+      "count": 276,
+      "total_reward": 549.0,
+      "average_reward": 1.9891,
+      "thresholds": {
+        "review_threshold": 0.3,
+        "block_threshold": 0.7
+      }
+    },
+    "aggressive": {
+      "count": 6488,
+      "total_reward": 12957.0,
+      "average_reward": 1.9971,
+      "thresholds": {
+        "review_threshold": 0.4,
+        "block_threshold": 0.8
+      }
+    }
+  }
+}
