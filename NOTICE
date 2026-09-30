@@ -1,0 +1,18 @@
+RingBreaker
+Copyright 2026 RingBreaker contributors
+
+This branch (Person 2: graphs, features, and named pattern detection) is original
+code written for the RingBreaker hackathon. It does not copy source from
+Mule-Hunter-Engine or LedgerZero.
+
+Design references consulted but not copied:
+
+- LedgerZero (Apache License 2.0), https://github.com/Concurrents-org/LedgerZero
+  Inspected for payment/user/device field names and graph relationship ideas
+  (users, devices, IPs, timestamped payments). No LedgerZero source files were
+  included in this tree.
+
+- Mule-Hunter-Engine (no license file present at time of inspection)
+  Inspected only as conceptual/algorithmic reference for useful graph statistics
+  and ring shapes. No Mule Hunter source was copied. Label-derived features
+  (community_fraud_rate, second_hop_fraud_rate) are intentionally not implemented.
