@@ -1,35 +1,51 @@
 """F15: lockstep / sleeper-batch clustering.
 
-DBSCAN on a small as-of feature vector per account:
+DBSCAN on a small as-of feature vector per account (PRD: "cluster accounts on
+signup time and activity rhythm"):
 
 - signup time (hours since epoch)
-- activity rhythm (mean inter-event hours, std of inter-event hours)
-- dormancy (hours since last payment as of T)
-- mean hour-of-day of activity
+- circular mean hour-of-day of activity (cos, sin)
+- circular dispersion of activity hour (0 = always at the same time of day)
+- log median gap between the account's payments (activity rhythm)
 
-Clusters are detection signals, not fraud labels. Noise points (DBSCAN -1) are
-omitted. Accounts with no signup and no history are skipped.
+DBSCAN groups accounts that look alike, which on its own also groups ordinary
+users. Each cluster is therefore scored on three interpretable lockstep
+signals, averaged into ``lockstep_score``:
+
+- signup compactness: 1 - signup span / 14 days
+- rhythm tightness:  1 - mean hour dispersion / 1.0
+- internal activity: share of members' outgoing payments that go to members
+
+A cluster is ``suspicious`` when that score is >= 0.6 and it has 3-60 members.
+Clusters are detection signals, not fraud labels. Only accounts with at least
+one payment visible at ``as_of`` are clustered.
 Also provides batch CSV pipeline execution for offline evaluation.
 """
 
 from __future__ import annotations
 
-import os
-import sys
+import math
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.cluster import DBSCAN
-from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
 from ringbreaker.graphs.build import TransactionGraph, parse_timestamp
 
-DEFAULT_EPS = 0.8
-DEFAULT_MIN_SAMPLES = 2
+DEFAULT_EPS = 0.3
+DEFAULT_MIN_SAMPLES = 4
+SUSPICIOUS_SCORE = 0.6
+MAX_SUSPICIOUS_SIZE = 60
+FEATURE_NAMES = [
+    "signup_hours",
+    "hour_cos",
+    "hour_sin",
+    "hour_dispersion",
+    "log_median_gap_hours",
+]
 
 
 def account_lockstep_vector(
@@ -43,32 +59,25 @@ def account_lockstep_vector(
     history = graph.get_account_history(
         account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
     )
-    signup = graph.get_signup_at(account_id, as_of=as_of_ts)
-    if signup is None and history:
-        signup = min(p.timestamp for p in history)
-    if signup is None:
+    if not history:
         return None
-    times = sorted(p.timestamp for p in history)
-    if times:
-        gaps = [
-            (times[i] - times[i - 1]).total_seconds() / 3600.0
-            for i in range(1, len(times))
-        ]
-        last = times[-1]
-    else:
-        gaps = []
-        last = signup
-    mean_gap = float(np.mean(gaps)) if gaps else 0.0
-    std_gap = float(np.std(gaps, ddof=1)) if len(gaps) >= 2 else 0.0
-    dormancy = max(0.0, (as_of_ts - last).total_seconds() / 3600.0)
-    hours = [ts.hour + ts.minute / 60.0 for ts in times]
-    mean_hour = float(np.mean(hours)) if hours else 0.0
+    signup = graph.get_signup_at(account_id, as_of=as_of_ts)
+    if signup is None:
+        signup = min(p.timestamp for p in history)
+    angles = [2 * math.pi * (p.timestamp.hour + p.timestamp.minute / 60.0) / 24.0 for p in history]
+    c = float(np.mean(np.cos(angles)))
+    s = float(np.mean(np.sin(angles)))
+    r = math.hypot(c, s)
+    dispersion = math.sqrt(-2.0 * math.log(max(r, 1e-9)))
+    times = sorted(p.timestamp.timestamp() for p in history)
+    gaps = np.diff(times) / 3600.0
+    median_gap = float(np.median(gaps)) if len(gaps) else 0.0
     return {
         "signup_hours": signup.timestamp() / 3600.0,
-        "mean_inter_event_hours": mean_gap,
-        "std_inter_event_hours": std_gap,
-        "dormancy_hours": dormancy,
-        "mean_hour_of_day": mean_hour,
+        "hour_cos": c,
+        "hour_sin": s,
+        "hour_dispersion": min(dispersion, 3.0),
+        "log_median_gap_hours": math.log1p(median_gap),
     }
 
 
@@ -91,14 +100,7 @@ def detect_lockstep(
             rows.append((account_id, vector))
     if len(rows) < min_samples:
         return []
-    feature_names = [
-        "signup_hours",
-        "mean_inter_event_hours",
-        "std_inter_event_hours",
-        "dormancy_hours",
-        "mean_hour_of_day",
-    ]
-    matrix = np.array([[row[1][name] for name in feature_names] for row in rows], dtype=float)
+    matrix = np.array([[row[1][name] for name in FEATURE_NAMES] for row in rows], dtype=float)
     scaled = StandardScaler().fit_transform(matrix)
     labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(scaled)
     clusters: dict[int, list[int]] = {}
@@ -109,10 +111,19 @@ def detect_lockstep(
     results: list[dict[str, Any]] = []
     for cluster_id, indices in sorted(clusters.items()):
         members = [rows[i][0] for i in indices]
-        subset = scaled[indices]
-        centroid = subset.mean(axis=0)
-        tightness = float(np.mean(np.linalg.norm(subset - centroid, axis=1)))
-        score = float(1.0 / (1.0 + tightness))
+        member_set = set(members)
+        signup_hours = matrix[indices, 0]
+        span_days = float(signup_hours.max() - signup_hours.min()) / 24.0
+        dispersion = float(matrix[indices, 3].mean())
+        total_out = internal_out = 0
+        for m in members:
+            for p in graph.outgoing_payments(m, as_of=as_of, exclude_transaction_id=exclude_transaction_id):
+                total_out += 1
+                internal_out += p.receiver in member_set
+        internal_ratio = internal_out / total_out if total_out else 0.0
+        compactness = max(0.0, 1.0 - span_days / 14.0)
+        rhythm = max(0.0, 1.0 - dispersion / 1.0)
+        score = float((compactness + rhythm + internal_ratio) / 3.0)
         member_features = {rows[i][0]: rows[i][1] for i in indices}
         results.append(
             {
@@ -120,13 +131,22 @@ def detect_lockstep(
                 "members": members,
                 "cluster_size": len(members),
                 "lockstep_score": score,
-                "feature_names": feature_names,
+                "suspicious": bool(
+                    score >= SUSPICIOUS_SCORE and 3 <= len(members) <= MAX_SUSPICIOUS_SIZE
+                ),
+                "feature_names": FEATURE_NAMES,
                 "member_features": member_features,
                 "evidence": {
                     "eps": eps,
                     "min_samples": min_samples,
-                    "mean_scaled_distance_to_centroid": tightness,
                     "algorithm": "DBSCAN",
+                    "signup_span_days": span_days,
+                    "mean_hour_dispersion": dispersion,
+                    "internal_payment_ratio": internal_ratio,
+                    "internal_payments": internal_out,
+                    "outgoing_payments": total_out,
+                    "signup_compactness": compactness,
+                    "rhythm_tightness": rhythm,
                 },
             }
         )

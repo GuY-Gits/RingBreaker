@@ -1,13 +1,14 @@
 """F8: pass-through chain detector.
 
 Looks for money hopping through 3–6 accounts with strictly increasing timestamps
-inside a bounded window (default: 15 minutes). Search is bounded DFS from each
+inside a bounded window (default: 60 minutes — the PRD's "within minutes"). Search is bounded DFS from each
 account; it does not enumerate the whole graph.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 from typing import Iterator
 
 import networkx as nx
@@ -17,7 +18,7 @@ from ringbreaker.patterns.result import PatternResult, graph_to_subgraph
 
 DEFAULT_MIN_ACCOUNTS = 3
 DEFAULT_MAX_ACCOUNTS = 6
-DEFAULT_WINDOW = timedelta(minutes=15)
+DEFAULT_WINDOW = timedelta(minutes=60)
 MAX_PATHS_PER_SOURCE = 50
 
 

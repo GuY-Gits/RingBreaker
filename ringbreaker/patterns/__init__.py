@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ringbreaker.patterns.chain import detect_pass_through_chains
 from ringbreaker.patterns.fan_in import detect_fan_in_collectors
