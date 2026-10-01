@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -267,6 +268,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RingBreaker", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS,
                    allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.include_router(router)
 app.include_router(router, prefix="/api")
 
