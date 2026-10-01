@@ -1,0 +1,12 @@
+.git
+.venv
+.claude
+dashboard/node_modules
+dashboard/dist
+experiments
+docs
+tests
+scripts
+*.egg-info
+**/__pycache__
+**/*.pyc
