@@ -97,7 +97,7 @@ def compute_sub_scores(f: Dict[str, float], ctx: Dict[str, Any]) -> Dict[str, fl
     }
 
 
-ALERT_BUDGET = 0.01   # share of payments analysts can review (alert = ALLOW threshold)
+ALERT_BUDGET = 0.01   # fallback share of payments analysts can review, used when no labels are given
 BLOCK_BUDGET = 0.002  # share of payments the business accepts blocking outright
 
 
@@ -106,21 +106,50 @@ def raw_fused(pair: float, anomaly: float, coordination: float) -> float:
     return _clip(PAIR_WEIGHT * pair + ANOMALY_WEIGHT * anomaly + LOCKSTEP_WEIGHT * coordination)
 
 
-def fit_calibration(raw_scores, alert_budget: float = ALERT_BUDGET, block_budget: float = BLOCK_BUDGET) -> Dict[str, Any]:
-    """Choose raw-score cut-offs so that, on the validation slice, the top
-    ``alert_budget`` of payments alert and the top ``block_budget`` block.
+def _best_f1_cutoff(raw, labels) -> Optional[Dict[str, float]]:
+    """Raw-score cut-off (flag when raw >= cut-off) with the highest F1 against ``labels``."""
+    import numpy as np
 
-    Label-free (an analyst-capacity budget), fitted only on validation data.
+    y = np.asarray(labels, dtype=int)
+    if len(y) != len(raw) or y.sum() == 0:
+        return None
+    order = np.argsort(-raw, kind="stable")
+    scores, hits = raw[order], y[order]
+    tp = np.cumsum(hits)
+    flagged = np.arange(1, len(raw) + 1)
+    # A cut-off can only sit where the score changes (ties flag together).
+    last_of_tie = np.append(scores[1:] != scores[:-1], True)
+    f1 = np.where(last_of_tie, 2.0 * tp / (flagged + y.sum()), -1.0)
+    i = int(np.argmax(f1))
+    return {"cutoff": float(scores[i]), "f1": float(f1[i]), "precision": float(tp[i] / flagged[i]),
+            "recall": float(tp[i] / y.sum()), "share": float(flagged[i] / len(raw))}
+
+
+def fit_calibration(raw_scores, labels=None, alert_budget: float = ALERT_BUDGET,
+                    block_budget: float = BLOCK_BUDGET) -> Dict[str, Any]:
+    """Choose the raw-score cut-offs for alerting and blocking on the validation slice.
+
+    With ``labels`` (the outcomes recorded for the validation slice), the alert
+    cut-off is the one that maximises F1 there, balancing precision and recall.
+    Without labels it falls back to alerting on the top ``alert_budget`` of
+    payments. The block cut-off is always the top ``block_budget``. Fitted only
+    on validation data, never the held-out stream.
     """
     import numpy as np
 
     raw = np.asarray(raw_scores, dtype=float)
-    alert = float(np.quantile(raw, 1.0 - alert_budget))
+    best = _best_f1_cutoff(raw, labels) if labels is not None else None
+    alert = best["cutoff"] if best else float(np.quantile(raw, 1.0 - alert_budget))
     block = float(np.quantile(raw, 1.0 - block_budget))
     block = min(max(block, alert + 1e-3), 0.999)
     alert = min(alert, block - 1e-3)
-    return {"alert_raw": round(alert, 6), "block_raw": round(block, 6), "alert_budget": alert_budget,
-            "block_budget": block_budget, "fitted_on": "validation", "rows": int(len(raw))}
+    out = {"alert_raw": round(alert, 6), "block_raw": round(block, 6),
+           "alert_budget": round(best["share"], 6) if best else alert_budget,
+           "block_budget": block_budget, "fitted_on": "validation", "rows": int(len(raw)),
+           "alert_rule": "max_f1" if best else "budget"}
+    if best:
+        out["validation"] = {k: round(best[k], 4) for k in ("f1", "precision", "recall")}
+    return out
 
 
 def calibrate(raw: float, calibration: Optional[Dict[str, Any]]) -> float:

@@ -83,8 +83,9 @@ flowchart TD
    plausibility (F6), identity sharing (F4), and patterns and lockstep from the
    latest slow path, all as of T.
 6. **Fusion + calibration**: `0.60·pair + 0.25·anomaly + 0.15·lockstep`, mapped
-   through thresholds fitted on the validation slice so that 1% of payments
-   alert and 0.2% block (an analyst-capacity budget, no held-out data). Then
+   through thresholds fitted on the validation slice (no held-out data): the
+   alert cut-off maximises F1 against the recorded validation labels (about
+   0.5% of payments alert), and the top 0.2% block. Then
    noisy-OR with network risk: 1.0 for analyst-confirmed accounts, 0.5 × the
    propagated risk of other accounts.
 7. **Action (F11)**: `< 0.30` ALLOW, `≥ 0.70` BLOCK. Between the two, the
@@ -153,26 +154,31 @@ benign look-alike groups and 10% label noise. Held-out stream: 11,199 payments,
 
 | | No analyst action | After one confirmation |
 | --- | --- | --- |
-| Precision / recall | 54.4% / 84.2% | 37.0% / 85.3% |
-| False-positive rate | 0.60% | 1.24% |
-| Precision of top 25 alerts | 96% | 36% (confirmed accounts' payments rank first) |
-| Novel-family recall (never in training) | 80% | 80% |
+| Precision / recall | 77.8% / 73.7% | 45.1% / 77.9% |
+| False-positive rate | 0.18% | 0.81% |
+| Block-tier precision (blocked payments) | 95.7% (47) | 62.1% (87) |
+| Novel-family recall (never in training) | 74% | 74% |
 | Benign look-alike flag rate | 0.0% | 0.0% |
 | Sleeper ring flagged before bust-out | 123 h | 123 h |
-| Fast path p50 / p95 | 2.4 / 2.7 ms | 2.4 / 2.9 ms |
+| Fast path p50 / p95 | 2.3 / 2.6 ms | 2.3 / 2.7 ms |
 
 Held-out pair-model PR-AUC 0.81 (base rate 0.85%).
 
 Confirmation reach: the suggested seeds were 7/7 real ring accounts;
-afterwards 28 more ring accounts and 44 other accounts crossed 30% risk (the
+afterwards 26 more ring accounts and 31 other accounts crossed 30% risk (the
 latter mostly counterparties of the confirmed mules). Payment-level labels
 count a confirmed mule's everyday payments as genuine, which is why precision
-drops after a confirmation; on new cases (payments not involving a confirmed
-account) precision is 38.5%, recall 83.8%.
+(alert and block tier) drops after a confirmation; on new cases (payments not
+involving a confirmed account) precision is 50.4%, recall 75.0%.
 
-Weakest families: mule chains (2/4 held-out payments) and the novel
-distributed-device ring (24/31). Slow chains mostly evade the named-pattern
-detector; the pair model still flags 16/19 of their payments.
+The alert cut-off was chosen on validation only (best F1 there: 0.51 against
+the noisy recorded labels); the figures above are what that choice gives on
+the held-out stream.
+
+Weakest families: mule chains (2/4 held-out payments), closed loops (8/12),
+the synthetic sleeper (6/9) and the novel distributed-device ring (22/31).
+Slow chains mostly evade the named-pattern detector; the pair model still
+flags 15/19 of their payments.
 
 ## Module map
 

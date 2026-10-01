@@ -371,7 +371,9 @@ export interface EvaluationRun {
   per_ring: Record<string, { payments: number; flagged: number; recall: number }>;
   per_family?: Record<string, { payments: number; flagged: number; recall: number }>;
   novel_family_recall?: number | null;
-  precision_at_k?: Record<string, number | null>;
+  blocked?: number;
+  block_precision?: number | null;
+  block_recall?: number | null;
   benign_group_false_positive_rate?: number | null;
   benign_group_flags?: Record<string, { payments: number; flagged: number }>;
   new_cases?: { payments: number; tp: number; fp: number; precision: number | null; recall: number | null };

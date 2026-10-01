@@ -167,8 +167,8 @@ function EvalBlock({ title, run, extra }: { title: string; run: EvaluationRun; e
         <Metric label="Recall" value={pct(run.recall, 1)} />
         <Metric label="False-positive rate" value={pct(run.false_positive_rate, 2)} />
         <Metric label="Flagged / fraud" value={`${run.flagged} / ${run.fraud_payments}`} />
-        {run.precision_at_k?.['p@25'] != null && (
-          <Metric label="Precision, top 25" value={pct(run.precision_at_k['p@25'])} tip="Share of the 25 highest-risk payments that are fraud" />
+        {run.block_precision != null && (
+          <Metric label="Block precision" value={pct(run.block_precision, 1)} tip={`Share of the ${run.blocked} blocked payments that are fraud`} />
         )}
         {run.novel_family_recall != null && (
           <Metric label="Novel-family recall" value={pct(run.novel_family_recall)} tip="Ring shapes that never appear in training" />

@@ -79,7 +79,6 @@ def _run(engine: Engine, labels: pd.DataFrame, confirm_ring: Optional[str]) -> D
             "ring": r_id,
             "family": meta.get("family"),
             "variant": meta.get("variant"),
-            "risk_score": p.get("overall_risk", 0.0),
             "group": lab["group_id"] if isinstance(lab.get("group_id"), str) else None,
         })
     df = pd.DataFrame(rows)
@@ -111,11 +110,8 @@ def _run(engine: Engine, labels: pd.DataFrame, confirm_ring: Optional[str]) -> D
         for t, g in benign_df.assign(t=benign_df.group.map(gtype)).groupby("t"):
             benign_types[t] = {"payments": int(len(g)), "flagged": int(g.flag.sum())}
 
-    df_sorted = df.sort_values(by="risk_score", ascending=False)
-    precision_at_k = {}
-    for k in (25, 50, 100):
-        top_k = df_sorted.iloc[:k]
-        precision_at_k[f"p@{k}"] = round(float(top_k.fraud.mean()), 4) if len(top_k) else None
+    blocked = df[df.block]
+    block_tp = int((blocked.fraud == 1).sum())
 
     bust = labels[(labels.ring_id == "RING_SLEEPER") & (labels.amount > 1000)]["timestamp"].min()
     lead_hours = None
@@ -156,7 +152,9 @@ def _run(engine: Engine, labels: pd.DataFrame, confirm_ring: Optional[str]) -> D
         "per_ring": per_ring,
         "per_family": per_family,
         "novel_family_recall": novel_recall,
-        "precision_at_k": precision_at_k,
+        "blocked": int(len(blocked)),
+        "block_precision": round(block_tp / len(blocked), 4) if len(blocked) else None,
+        "block_recall": round(block_tp / (tp + fn), 4) if tp + fn else None,
         "sleeper_lockstep_first_detected": lockstep_first,
         "sleeper_bust_out_start": bust if isinstance(bust, str) else None,
         "sleeper_lead_time_hours": lead_hours,

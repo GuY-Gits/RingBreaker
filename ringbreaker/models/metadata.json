@@ -71,11 +71,17 @@
     "trees": 128
   },
   "risk_calibration": {
-    "alert_raw": 0.573323,
+    "alert_raw": 0.70831,
     "block_raw": 0.767143,
-    "alert_budget": 0.01,
+    "alert_budget": 0.005118,
     "block_budget": 0.002,
     "fitted_on": "validation",
-    "rows": 8206
+    "rows": 8206,
+    "alert_rule": "max_f1",
+    "validation": {
+      "f1": 0.5116,
+      "precision": 0.5238,
+      "recall": 0.5
+    }
   }
 }

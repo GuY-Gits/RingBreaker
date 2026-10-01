@@ -112,7 +112,9 @@ def calibrate_on_validation(frame: pd.DataFrame) -> Dict[str, Any]:
     pair = booster.predict(xgb.DMatrix(val[PAIR_FEATURE_NAMES].astype(float).values, feature_names=PAIR_FEATURE_NAMES))
     # Lockstep coordination is computed online only; it is 0 for almost all payments.
     raw = [raw_fused(p, a, 0.0) for p, a in zip(pair, val["eif_anomaly"])]
-    return fit_calibration(raw)
+    # Recorded (noisy) outcomes, as an institution would have them; never ground truth.
+    label_col = "label_observed" if "label_observed" in val.columns else "is_fraud"
+    return fit_calibration(raw, val[label_col].astype(int).to_numpy())
 
 
 def _safe_metric(fn, y, s) -> float | None:

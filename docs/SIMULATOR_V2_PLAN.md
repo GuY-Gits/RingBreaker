@@ -247,8 +247,9 @@ short.
   so look-alike false-positive rate is actually measurable.
 - **Touched-accounts band** widened to 1.5–4.5% (fresh novel-family accounts
   push it to ~3.9%).
-- **Decision thresholds are calibrated** on the validation slice to a 1% review
-  / 0.2% block budget. The fixed 0.30/0.70 cut-offs were tuned for v1 and
+- **Decision thresholds are calibrated** on the validation slice: the alert
+  cut-off maximises F1 there (about 0.5% of payments; originally a 1% review
+  budget) and the top 0.2% block. The fixed 0.30/0.70 cut-offs were tuned for v1 and
   produced ~1,100 false alerts on v2.
 - **Chain detector**: 6 h window, each hop forwards 85–100% of the previous
   amount. The 24 h / ±50% setting matched ~900 chains in 90 days (5% ring).

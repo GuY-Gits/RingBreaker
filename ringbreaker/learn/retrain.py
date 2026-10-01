@@ -100,7 +100,9 @@ def retrain_with_verified(
     booster = clf.get_booster()
     val_pair = booster.predict(xgb.DMatrix(val[PAIR_FEATURE_NAMES].astype(float).values, feature_names=PAIR_FEATURE_NAMES))
     val_anom = val["eif_anomaly"].to_numpy() if "eif_anomaly" in val.columns else np.zeros(len(val))
-    calibration = fit_calibration([raw_fused(p, a, 0.0) for p, a in zip(val_pair, val_anom)])
+    val_label = "label_observed" if "label_observed" in val.columns else "is_fraud"
+    calibration = fit_calibration([raw_fused(p, a, 0.0) for p, a in zip(val_pair, val_anom)],
+                                  val[val_label].astype(int).to_numpy())
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
     booster.save_model(str(config.RETRAINED_MODEL_PATH))
 

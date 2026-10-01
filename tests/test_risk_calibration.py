@@ -17,6 +17,25 @@ def test_calibration_hits_budgets_on_fit_data():
     assert abs((risk >= 0.70).mean() - 0.002) < 0.001
 
 
+def test_calibration_with_labels_picks_best_f1_cutoff():
+    rng = np.random.default_rng(1)
+    y = (rng.random(20000) < 0.01).astype(int)
+    raw = np.clip(np.where(y == 1, rng.normal(0.7, 0.1, 20000), rng.normal(0.2, 0.1, 20000)), 0, 1)
+    cal = fit_calibration(raw, y)
+
+    def f1(cut):
+        pred = raw >= cut
+        tp = (pred & (y == 1)).sum()
+        return 2 * tp / (pred.sum() + y.sum())
+
+    assert cal["alert_rule"] == "max_f1"
+    assert all(f1(cal["alert_raw"]) >= f1(c) - 1e-9 for c in np.linspace(0.05, 0.95, 181))
+    assert abs(cal["validation"]["f1"] - f1(cal["alert_raw"])) < 1e-3
+    assert cal["alert_raw"] < cal["block_raw"]
+    # no positive labels -> falls back to the review budget
+    assert fit_calibration(raw, np.zeros(20000, dtype=int))["alert_rule"] == "budget"
+
+
 def test_calibration_is_monotone_and_bounded():
     cal = {"alert_raw": 0.4, "block_raw": 0.8}
     xs = np.linspace(0, 1, 501)

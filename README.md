@@ -36,7 +36,8 @@ together, then open <http://localhost:5173/app>.
    on most of that period, so they are excluded from every reported metric.
 2. **Alerts** fill up as rings act; honest look-alikes (households sharing a
    device, rent collectors, trip splits) and some ordinary payments also
-   appear — the alert threshold is set to a 1% analyst-review budget.
+   appear — the alert threshold is the best-F1 cut-off on the validation
+   slice (about 0.5% of payments).
    The stream **pauses automatically on each BLOCK**. Click **Open case**.
 3. **Investigation**: the risk decision and reasons, the evidence graph with
    the flagged payment, any detected patterns, timeline, SHAP factors,
