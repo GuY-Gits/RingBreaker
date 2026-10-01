@@ -1,730 +1,469 @@
-"""
-RingBreaker Synthetic Payment Simulator
-=======================================
-Generates realistic P2P transaction data containing normal users, sleeper/mule accounts,
-scam victims, shared identity fragments, and planted fraud rings (Loop, Fan-In, Chain, Star, Held-Out).
+"""RingBreaker Simulator v2: Realistic Synthetic Payment Generator.
+
+Orchestrates population generation, benign look-alike groups, randomized fraud ring families,
+normal traffic, camouflage, and label noise.
 Outputs:
   - data/users.csv
   - data/payments.csv
   - data/rings.csv
 """
 
+from __future__ import annotations
+
+import argparse
 import os
 import random
-import argparse
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Set, Tuple
+
 import numpy as np
 import pandas as pd
 
-# ==========================================
-# 1. CONFIGURATION & HYPERPARAMETERS
-# ==========================================
-NUM_USERS = 2000
-NUM_TRANSACTIONS = 10000
-NUM_FRAUD_RINGS = 5  # Total rings: 4 training/validation rings + 1 held-out test ring
-RANDOM_SEED = 42
+from ringbreaker.simulator.benign import BenignGroupGenerator
+from ringbreaker.simulator.config import DEFAULT_CONFIG, SimulatorConfig
+from ringbreaker.simulator.labels import apply_label_noise, rings_to_dataframe
+from ringbreaker.simulator.normal import NormalTrafficGenerator
+from ringbreaker.simulator.population import Population
+from ringbreaker.simulator.rings import (
+    RingSpec,
+    add_camouflage_payments,
+    generate_chain_instance,
+    generate_distributed_device_instance,
+    generate_fan_in_instance,
+    generate_loop_instance,
+    generate_scam_instance,
+    generate_sleeper_instance,
+    generate_slow_chain_instance,
+    generate_star_instance,
+)
+from ringbreaker.simulator.validate import validate_simulator_data
 
-SIMULATION_DAYS = 90
-HELD_OUT_START_DAY = 76.5  # Last 15% window of the 90 days (70/15/15 time split)
-BASE_START_DATE = datetime(2026, 1, 1, 0, 0, 0)
+# Re-export key constants for backward compatibility
+NUM_USERS = DEFAULT_CONFIG.num_users
+NUM_TRANSACTIONS = DEFAULT_CONFIG.target_payments
+SIMULATION_DAYS = DEFAULT_CONFIG.sim_days
+HELD_OUT_START_DAY = DEFAULT_CONFIG.held_out_start_day
+BASE_START_DATE = DEFAULT_CONFIG.base_start_date
+RANDOM_SEED = DEFAULT_CONFIG.random_seed
+OUTPUT_DIR = DEFAULT_CONFIG.output_dir
 
-OUTPUT_DIR = "data"
 
-
-def set_seed(seed=RANDOM_SEED):
+def set_seed(seed: int = RANDOM_SEED) -> None:
     random.seed(seed)
     np.random.seed(seed)
 
 
-# ==========================================
-# 2. SYNTHETIC USER & IDENTITY GENERATION
-# ==========================================
-def generate_users(num_users=NUM_USERS, sim_days=SIMULATION_DAYS, start_date=BASE_START_DATE):
-    """
-    Generates synthetic accounts with realistic identity fragments.
-    Initializes roles as 'normal', to be specialized later by fraud-ring generators.
-    """
-    users = []
-    
-    # Pre-generate shared resource pools for realistic identity clusters
-    cities = ["Mumbai", "Bengaluru", "Delhi", "Hyderabad", "Pune", "Chennai", "Kolkata", "Ahmedabad"]
-    streets = ["MG Road", "Station Road", "Park Street", "Ring Road", "Nehru Nagar", "Indira Nagar", "Civil Lines"]
-
-    for i in range(1, num_users + 1):
-        u_id = f"U{i:05d}"
-        
-        # Signup timestamp spread over the first 45 days or earlier
-        signup_offset_days = random.uniform(0, sim_days * 0.5)
-        signup_ts = start_date + timedelta(days=signup_offset_days, seconds=random.randint(0, 86400))
-        
-        # Synthetic credentials
-        phone = f"+9198{random.randint(10000000, 99999999)}"
-        city = random.choice(cities)
-        street = random.choice(streets)
-        address = f"Flat {random.randint(101, 999)}, {street}, {city} - {random.randint(400001, 700001)}"
-        device_id = f"DEV_{random.randint(100000, 999999)}"
-        ip_address = f"192.168.{random.randint(1, 254)}.{random.randint(1, 254)}"
-        
-        users.append({
-            "user_id": u_id,
-            "phone": phone,
-            "address": address,
-            "device_id": device_id,
-            "ip_address": ip_address,
-            "signup_timestamp": signup_ts.strftime("%Y-%m-%d %H:%M:%S"),
-            "user_role": "normal"
-        })
-        
-    df_users = pd.DataFrame(users)
-    return df_users
+def generate_users(num_users: int = NUM_USERS, sim_days: int = SIMULATION_DAYS, start_date: datetime = BASE_START_DATE) -> pd.DataFrame:
+    """Backward-compatible user generation helper."""
+    cfg = SimulatorConfig(num_users=num_users, sim_days=sim_days, base_start_date=start_date)
+    pop = Population(cfg)
+    return pop.generate()
 
 
-def apply_identity_sharing(df_users, fraud_user_ids, num_clusters=3):
-    """
-    Subtly colludes fraud ring members by sharing device_id, ip_address, or address
-    across small clusters, generating realistic identity-fragment graphs.
-    """
-    cluster_size = max(2, len(fraud_user_ids) // num_clusters)
-    for i in range(num_clusters):
-        subset = fraud_user_ids[i * cluster_size : (i + 1) * cluster_size]
-        if len(subset) < 2:
-            continue
-            
-        shared_dev = f"DEV_SHARED_{i+1:03d}"
-        shared_ip = f"10.0.{i+1}.{random.randint(2, 250)}"
-        shared_addr = f"Flat {400 + i}, Trade Center, Ring Road, Mumbai - 400051"
-        
-        for uid in subset:
-            idx = df_users.index[df_users["user_id"] == uid].tolist()[0]
-            # Probabilistic partial sharing (never 100% full match to stay realistic)
-            if random.random() < 0.75:
-                df_users.at[idx, "device_id"] = shared_dev
-            if random.random() < 0.70:
-                df_users.at[idx, "ip_address"] = shared_ip
-            if random.random() < 0.50:
-                df_users.at[idx, "address"] = shared_addr
+def generate_all_rings_v2(
+    df_users: pd.DataFrame,
+    population: Population,
+    config: SimulatorConfig,
+    tx_counter_start: int = 1,
+) -> Tuple[List[Dict[str, Any]], List[RingSpec], int]:
+    """Generates all randomized fraud ring families distributed across train (70%),
 
-
-# ==========================================
-# 3. NORMAL TRANSACTION GENERATION
-# ==========================================
-def generate_normal_transactions(df_users, target_count, start_date=BASE_START_DATE, sim_days=SIMULATION_DAYS):
+    validation (15%), and held-out (15%), plus novel families strictly in held-out.
     """
-    Generates realistic, daily P2P payments:
-    - Log-normal amounts (INR 50 to 5,000)
-    - Frequent counterparties (power-law distribution)
-    - Realistic diurnal activity peaks (afternoon/evening)
-    """
-    payments = []
-    normal_users = df_users[df_users["user_role"] == "normal"]["user_id"].values
-    num_norm = len(normal_users)
-    
-    # Construct persistent counterparty affinities (friends, regular merchants, family)
-    affinities = {}
-    for uid in normal_users:
-        partner_count = random.randint(1, 5)
-        partners = np.random.choice(normal_users, size=partner_count, replace=False)
-        affinities[uid] = [p for p in partners if p != uid]
+    payments: List[Dict[str, Any]] = []
+    specs: List[RingSpec] = []
+    tx_id = tx_counter_start
 
     user_meta = df_users.set_index("user_id").to_dict("index")
-    tx_counter = 1
+    available_users: Set[str] = set(df_users["user_id"].values)
 
-    while len(payments) < target_count:
-        sender = np.random.choice(normal_users)
-        
-        # 65% chance of transacting with a known affinity; otherwise random normal user
-        if affinities.get(sender) and random.random() < 0.65:
-            receiver = random.choice(affinities[sender])
+    def reserve(n: int) -> List[str]:
+        chosen = random.sample(sorted(available_users), min(n, len(available_users)))
+        for u in chosen:
+            available_users.discard(u)
+        return chosen
+
+    def reserve_established(n: int) -> List[str]:
+        """Accounts that existed well before the simulation (scam victims are established users)."""
+        cutoff = (config.base_start_date - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+        pool = sorted(u for u in available_users if user_meta[u]["signup_timestamp"] <= cutoff)
+        chosen = random.sample(pool, min(n, len(pool)))
+        for u in chosen:
+            available_users.discard(u)
+        return chosen
+
+    start_date = config.base_start_date
+    sim_days = config.sim_days
+
+    # Time splits (days)
+    # Train: 0 to 63 (70%)
+    # Validation: 63 to 76.5 (15%)
+    # Heldout: 76.5 to 90 (15%)
+    t_train_max = 63.0
+    t_val_max = config.held_out_start_day
+    t_sim_max = float(sim_days)
+
+    ring_counter = 1
+    all_fraud_accounts: Set[str] = set()
+
+    def sample_start_time(split: str) -> datetime:
+        if split == "train":
+            day = random.uniform(5.0, t_train_max - 4.0)
+        elif split == "validation":
+            day = random.uniform(t_train_max + 0.5, t_val_max - 2.0)
+        else:  # heldout
+            day = random.uniform(t_val_max + 0.5, t_sim_max - 3.0)
+        return start_date + timedelta(days=day, hours=random.randint(8, 22), minutes=random.randint(0, 59))
+
+    # Standard families distribution: 70% train, 15% validation, 15% held-out
+    splits_pool = ["train"] * 7 + ["validation"] * 2 + ["heldout"] * 2
+
+    # Scaling factor for unit test configurations with small user populations
+    scale = max(0.15, min(1.0, config.num_users / 5000.0)) if config.num_users < 5000 else 1.0
+
+    # Reusable fraud syndicate account pool.
+    # In real fraud ecosystems, syndicates operate mule networks that are reused across
+    # cycles, campaigns, and structural topologies.
+    syndicate_size = max(18, int(config.num_users * 0.015))
+    syndicate_pool = reserve(syndicate_size)
+    if len(syndicate_pool) < 10:
+        syndicate_pool = list(available_users)[:max(5, len(available_users))]
+
+    # 1. Closed Loops (5-7 instances)
+    n_loops = max(1, int(round(random.randint(config.ring_family_counts["closed_loop"][0], config.ring_family_counts["closed_loop"][1]) * scale)))
+    for _ in range(n_loops):
+        split = random.choice(splits_pool)
+        size = min(random.randint(3, 6), len(syndicate_pool))
+        if size < 3:
+            continue
+        members = random.sample(syndicate_pool, size)
+        all_fraud_accounts.update(members)
+        r_id = f"RING_{ring_counter:03d}"
+        ring_counter += 1
+        t_start = sample_start_time(split)
+        p, s, tx_id = generate_loop_instance(r_id, members, user_meta, t_start, split, tx_id)
+        payments.extend(p)
+        specs.append(s)
+
+    # 2. Mule Chains (10-12 instances)
+    n_chains = max(1, int(round(random.randint(config.ring_family_counts["mule_chain"][0], config.ring_family_counts["mule_chain"][1]) * scale)))
+    has_named_mule_ho = False
+    for chain_idx in range(n_chains):
+        split = "heldout" if (chain_idx == n_chains - 1 and not has_named_mule_ho) else random.choice(splits_pool)
+        hops = min(random.randint(3, 6), len(syndicate_pool))
+        if hops < 3:
+            continue
+        members = random.sample(syndicate_pool, hops)
+        all_fraud_accounts.update(members)
+        waves = 2 if (split == "heldout" and not has_named_mule_ho) else random.choice([1, 1, 2, 2, 3])
+        if split == "heldout" and not has_named_mule_ho:
+            r_id = "RING_MULE_HO"
+            has_named_mule_ho = True
         else:
-            receiver = np.random.choice(normal_users)
-            while receiver == sender:
-                receiver = np.random.choice(normal_users)
+            r_id = f"RING_{ring_counter:03d}"
+            ring_counter += 1
+        t_start = sample_start_time(split)
+        p, s, tx_id = generate_chain_instance(r_id, members, user_meta, t_start, split, tx_id, waves=waves)
+        payments.extend(p)
+        specs.append(s)
 
-        sender_meta = user_meta[sender]
-        signup_dt = datetime.strptime(sender_meta["signup_timestamp"], "%Y-%m-%d %H:%M:%S")
-        
-        # Choose a timestamp strictly after sender's signup
-        min_seconds = max(0, int((signup_dt - start_date).total_seconds()))
-        max_seconds = int(sim_days * 86400)
-        if min_seconds >= max_seconds - 3600:
+    # 3. Fan-In Collectors + Cash-Out (8-10 instances)
+    n_fanin = max(1, int(round(random.randint(config.ring_family_counts["fan_in_collector"][0], config.ring_family_counts["fan_in_collector"][1]) * scale)))
+    for _ in range(n_fanin):
+        split = random.choice(splits_pool)
+        n_feed = min(random.randint(4, 7), len(syndicate_pool) - 3)
+        if n_feed < 3:
             continue
-            
-        random_sec = random.randint(min_seconds, max_seconds)
-        tx_dt = start_date + timedelta(seconds=random_sec)
-        
-        # Diurnal distribution adjustment (lower traffic late night 01:00-06:00)
-        hour = tx_dt.hour
-        if 1 <= hour <= 6 and random.random() > 0.15:
-            # Shift transaction to daytime
-            tx_dt = tx_dt.replace(hour=random.randint(9, 21))
+        feeders = random.sample(syndicate_pool, n_feed)
+        rem = [u for u in syndicate_pool if u not in feeders]
+        collector = [random.choice(rem)]
+        rem.remove(collector[0])
+        n_exit = min(random.randint(1, 2), len(rem))
+        exits = random.sample(rem, n_exit)
+        col_id = collector[0]
+        all_fraud_accounts.update(feeders + [col_id] + exits)
+        r_id = f"RING_{ring_counter:03d}"
+        ring_counter += 1
+        t_start = sample_start_time(split)
+        p, s, tx_id = generate_fan_in_instance(r_id, feeders, col_id, exits, user_meta, t_start, split, tx_id)
+        payments.extend(p)
+        specs.append(s)
 
-        # Realistic retail amount: lognormal centered around ₹450-₹1,200
-        amount = float(np.round(np.clip(np.random.lognormal(mean=6.5, sigma=1.0), 30, 25000), 2))
-        
-        payments.append({
-            "transaction_id": f"TX_{tx_counter:07d}",
-            "timestamp": tx_dt.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": sender,
-            "receiver": receiver,
-            "amount": amount,
-            "device_id": sender_meta["device_id"],
-            "ip_address": sender_meta["ip_address"],
-            "is_fraud": 0,
-            "ring_id": None
-        })
-        tx_counter += 1
+    # 4. Device Farm Stars (4-6 instances)
+    n_stars = max(1, int(round(random.randint(config.ring_family_counts["device_farm_star"][0], config.ring_family_counts["device_farm_star"][1]) * scale)))
+    for _ in range(n_stars):
+        split = random.choice(splits_pool)
+        n_spk = min(random.randint(4, 8), len(syndicate_pool) - 2)
+        if n_spk < 3:
+            continue
+        spokes = random.sample(syndicate_pool, n_spk)
+        rem = [u for u in syndicate_pool if u not in spokes]
+        hub_id = random.choice(rem)
+        all_fraud_accounts.update(spokes + [hub_id])
+        r_id = f"RING_{ring_counter:03d}"
+        ring_counter += 1
+        t_start = sample_start_time(split)
+        p, s, tx_id = generate_star_instance(r_id, spokes, hub_id, user_meta, t_start, split, tx_id)
+        payments.extend(p)
+        specs.append(s)
 
-    return payments
+    # 5. Scam Victims -> Mule (8-10 instances)
+    n_scams = max(1, int(round(random.randint(config.ring_family_counts["scam_victim_mule"][0], config.ring_family_counts["scam_victim_mule"][1]) * scale)))
+    for _ in range(n_scams):
+        split = random.choice(splits_pool)
+        victims = reserve_established(random.randint(1, 2))
+        if not victims or len(syndicate_pool) < 2:
+            continue
+        mule = random.choice(syndicate_pool)
+        rem = [u for u in syndicate_pool if u != mule]
+        exit_acc = random.choice(rem)
+        all_fraud_accounts.update(victims + [mule, exit_acc])
+        r_id = f"RING_{ring_counter:03d}"
+        ring_counter += 1
+        t_start = sample_start_time(split)
+        p, s, tx_id = generate_scam_instance(r_id, victims, mule, exit_acc, user_meta, t_start, split, tx_id)
+        payments.extend(p)
+        specs.append(s)
 
+    # 6. Synthetic-Identity Sleepers (4-6 instances)
+    n_sleepers = max(1, int(round(random.randint(config.ring_family_counts["synthetic_sleeper"][0], config.ring_family_counts["synthetic_sleeper"][1]) * scale)))
+    for s_idx in range(n_sleepers):
+        # sleepers span train into validation/heldout; split is marked train as signups/sleep are in train
+        split = "train"
+        members = reserve(random.randint(6, 8))
+        cashout = reserve(2)
+        if len(members) < 5 or not cashout:
+            continue
+        all_fraud_accounts.update(members + cashout)
+        r_id = f"RING_{ring_counter:03d}" if s_idx > 0 else "RING_SLEEPER"
+        ring_counter += 1
+        signup_day = 8 + s_idx * 5
+        p, s, tx_id = generate_sleeper_instance(
+            r_id, members, cashout, df_users, user_meta, start_date, split, tx_id, signup_day_start=signup_day
+        )
+        payments.extend(p)
+        specs.append(s)
 
-# ==========================================
-# 4. PLANTED FRAUD RINGS GENERATION
-# ==========================================
-def generate_loop_ring(ring_id, members, df_users, base_time, tx_counter_start):
-    """
-    RING TYPE 1: Circular Loop (A -> B -> C -> D -> A)
-    Rapid cycling of funds with slight deductions (mule cut/fees), preserving money balance.
-    """
-    payments = []
-    current_time = base_time
-    base_amount = random.uniform(4200, 6800)
-    tx_id = tx_counter_start
-    user_meta = df_users.set_index("user_id").to_dict("index")
+    # 7. Novel Families (Strictly Held-Out)
+    # 7a. Slow Chains (4-5 instances)
+    n_slow = max(1, int(round(random.randint(config.novel_family_counts["slow_chain"][0], config.novel_family_counts["slow_chain"][1]) * scale)))
+    for _ in range(n_slow):
+        # Novel family: fresh mule accounts, never part of a training ring.
+        members = reserve(random.randint(4, 6))
+        if len(members) < 3:
+            continue
+        all_fraud_accounts.update(members)
+        r_id = f"RING_{ring_counter:03d}"
+        ring_counter += 1
+        t_start = sample_start_time("heldout")
+        p, s, tx_id = generate_slow_chain_instance(r_id, members, user_meta, t_start, tx_id)
+        payments.extend(p)
+        specs.append(s)
 
-    # Complete the circle: A->B, B->C, C->D, D->A
-    cycle = members + [members[0]]
-    for i in range(len(cycle) - 1):
-        u_from = cycle[i]
-        u_to = cycle[i + 1]
-        
-        # Short dwell time (5 to 35 minutes)
-        current_time += timedelta(minutes=random.randint(5, 35), seconds=random.randint(0, 59))
-        
-        # Subtle variance in amount to mimic transaction slippage / cash out fees
-        amt = round(base_amount * random.uniform(0.95, 0.99), 2)
-        base_amount = amt
-        
-        payments.append({
-            "transaction_id": f"TX_{tx_id:07d}",
-            "timestamp": current_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": u_from,
-            "receiver": u_to,
-            "amount": amt,
-            "device_id": user_meta[u_from]["device_id"],
-            "ip_address": user_meta[u_from]["ip_address"],
-            "is_fraud": 1,
-            "ring_id": ring_id
-        })
-        tx_id += 1
+    # 7b. Distributed-Device Rings (3-5 instances)
+    n_dist = max(1, int(round(random.randint(config.novel_family_counts["distributed_device_ring"][0], config.novel_family_counts["distributed_device_ring"][1]) * scale)))
+    for _ in range(n_dist):
+        # Novel family: fresh accounts, never part of a training ring.
+        feeders = reserve(random.randint(4, 6))
+        collector_acc = reserve(1)
+        if len(feeders) < 3 or not collector_acc:
+            continue
+        col_id = collector_acc[0]
+        all_fraud_accounts.update(feeders + [col_id])
+        r_id = f"RING_{ring_counter:03d}"
+        ring_counter += 1
+        t_start = sample_start_time("heldout")
+        p, s, tx_id = generate_distributed_device_instance(r_id, feeders, col_id, user_meta, t_start, tx_id, df_users=df_users)
+        payments.extend(p)
+        specs.append(s)
 
-    return payments, tx_id
-
-
-def generate_fan_in_ring(ring_id, members, mule, df_users, base_time, tx_counter_start):
-    """
-    RING TYPE 2: Fan-In / Collector
-    Multiple feeders (compromised or sleeper accounts) funnel funds to one central mule,
-    followed by the mule cashing out or moving funds onward.
-    """
-    payments = []
-    user_meta = df_users.set_index("user_id").to_dict("index")
-    tx_id = tx_counter_start
-    mule_total = 0.0
-    latest_time = base_time
-
-    # Incoming burst to the mule
-    for sender in members:
-        tx_time = base_time + timedelta(minutes=random.randint(5, 120), seconds=random.randint(0, 59))
-        if tx_time > latest_time:
-            latest_time = tx_time
-            
-        amt = float(round(random.uniform(2800, 4900), 2))
-        mule_total += amt
-
-        payments.append({
-            "transaction_id": f"TX_{tx_id:07d}",
-            "timestamp": tx_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": sender,
-            "receiver": mule,
-            "amount": amt,
-            "device_id": user_meta[sender]["device_id"],
-            "ip_address": user_meta[sender]["ip_address"],
-            "is_fraud": 1,
-            "ring_id": ring_id
-        })
-        tx_id += 1
-
-    # Mule forwards the consolidated amount onward shortly after collection
-    exit_node = members[0]  # or an off-ramp ring leader
-    drain_time = latest_time + timedelta(minutes=random.randint(20, 60))
-    payments.append({
-        "transaction_id": f"TX_{tx_id:07d}",
-        "timestamp": drain_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "sender": mule,
-        "receiver": exit_node,
-        "amount": round(mule_total * 0.96, 2),
-        "device_id": user_meta[mule]["device_id"],
-        "ip_address": user_meta[mule]["ip_address"],
-        "is_fraud": 1,
-        "ring_id": ring_id
-    })
-    tx_id += 1
-
-    return payments, tx_id
-
-
-def generate_chain_ring(ring_id, members, df_users, base_time, tx_counter_start):
-    """
-    RING TYPE 3: Chain / Layering Pass-Through (A -> B -> C -> D -> E)
-    Funds are passed linearly through intermediaries with minimal dwell time.
-    """
-    payments = []
-    user_meta = df_users.set_index("user_id").to_dict("index")
-    tx_id = tx_counter_start
-    current_time = base_time
-    amount = random.uniform(5000, 8500)
-
-    for i in range(len(members) - 1):
-        u_from = members[i]
-        u_to = members[i + 1]
-        
-        # PRD: money hops through the chain "within minutes"
-        current_time += timedelta(minutes=random.randint(1, 6), seconds=random.randint(0, 59))
-        amount = round(amount * random.uniform(0.96, 0.99), 2)
-        
-        payments.append({
-            "transaction_id": f"TX_{tx_id:07d}",
-            "timestamp": current_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": u_from,
-            "receiver": u_to,
-            "amount": amount,
-            "device_id": user_meta[u_from]["device_id"],
-            "ip_address": user_meta[u_from]["ip_address"],
-            "is_fraud": 1,
-            "ring_id": ring_id
-        })
-        tx_id += 1
-
-    return payments, tx_id
-
-
-def generate_star_ring(ring_id, hub_user, spoke_users, df_users, base_time, tx_counter_start, direction="inbound"):
-    """
-    RING TYPE 4: Star Network
-    Central hub interacting with multiple satellites (either inbound aggregation or outbound distribution).
-    """
-    payments = []
-    user_meta = df_users.set_index("user_id").to_dict("index")
-    tx_id = tx_counter_start
-
-    for spoke in spoke_users:
-        tx_time = base_time + timedelta(minutes=random.randint(5, 180), seconds=random.randint(0, 59))
-        amt = float(round(random.uniform(1800, 4200), 2))
-        
-        sender = spoke if direction == "inbound" else hub_user
-        receiver = hub_user if direction == "inbound" else spoke
-
-        payments.append({
-            "transaction_id": f"TX_{tx_id:07d}",
-            "timestamp": tx_time.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": sender,
-            "receiver": receiver,
-            "amount": amt,
-            "device_id": user_meta[sender]["device_id"],
-            "ip_address": user_meta[sender]["ip_address"],
-            "is_fraud": 1,
-            "ring_id": ring_id
-        })
-        tx_id += 1
-
-    return payments, tx_id
-
-
-def generate_scam_victim_tx(victim_id, mule_id, ring_id, df_users, tx_time, tx_counter):
-    """
-    Simulates a social engineering/phishing victim sending an unusual, out-of-pattern
-    payment to a ring mule. The victim is NOT marked as is_fraud=1 on their account,
-    though this specific transaction is part of the fraudulent ring extraction.
-    """
-    user_meta = df_users.set_index("user_id").to_dict("index")
-    amt = float(round(random.uniform(9000, 18000), 2))
-    
-    return {
-        "transaction_id": f"TX_{tx_counter:07d}",
-        "timestamp": tx_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "sender": victim_id,
-        "receiver": mule_id,
-        "amount": amt,
-        "device_id": user_meta[victim_id]["device_id"],
-        "ip_address": user_meta[victim_id]["ip_address"],
-        "is_fraud": 1,
-        "ring_id": ring_id
-    }
-
-
-# ==========================================
-# 5. ORCHESTRATION PIPELINE
-# ==========================================
-def generate_all_rings(df_users, start_date=BASE_START_DATE, tx_counter_start=1):
-    """
-    Allocates accounts to specific fraud topologies, handles sleeper accounts,
-    victim profiles, and creates RING_HELDOUT for the final test partition.
-    """
-    all_ring_payments = []
-    rings_meta = []
-    tx_id = tx_counter_start
-    all_fraud_user_ids = []
-
-    # Select candidate pool from users
-    available_users = list(df_users["user_id"].values)
-    random.shuffle(available_users)
-
-    # Helper to reserve unique users
-    def reserve(n):
-        return [available_users.pop() for _ in range(n)]
-
-    # --- RING 001: Circular Loop (Days 15 - 18) ---
-    r1_members = reserve(4)
-    all_fraud_user_ids.extend(r1_members)
-    for u in r1_members:
-        df_users.loc[df_users["user_id"] == u, "user_role"] = "ring_member"
-    r1_start = start_date + timedelta(days=16, hours=10)
-    p1, tx_id = generate_loop_ring("RING_001", r1_members, df_users, r1_start, tx_id)
-    all_ring_payments.extend(p1)
-    rings_meta.append({
-        "ring_id": "RING_001",
-        "ring_type": "circular_loop",
-        "members": ";".join(r1_members),
-        "start_time": min(p["timestamp"] for p in p1),
-        "end_time": max(p["timestamp"] for p in p1)
-    })
-
-    # --- RING 002: Fan-In / Collector with Sleeper Mule (Days 28 - 32) ---
-    r2_feeders = reserve(5)
-    r2_mule = reserve(1)[0]
-    all_fraud_user_ids.extend(r2_feeders + [r2_mule])
-    for u in r2_feeders:
-        df_users.loc[df_users["user_id"] == u, "user_role"] = "ring_member"
-    df_users.loc[df_users["user_id"] == r2_mule, "user_role"] = "mule"
-    
-    # Configure sleeper profile for mule: signup early, zero activity for 25 days
-    df_users.loc[df_users["user_id"] == r2_mule, "signup_timestamp"] = (
-        start_date + timedelta(days=2)
-    ).strftime("%Y-%m-%d %H:%M:%S")
-
-    r2_start = start_date + timedelta(days=30, hours=14)
-    p2, tx_id = generate_fan_in_ring("RING_002", r2_feeders, r2_mule, df_users, r2_start, tx_id)
-    
-    # Inject a victim who pays the mule
-    victim_1 = reserve(1)[0]
-    df_users.loc[df_users["user_id"] == victim_1, "user_role"] = "victim"
-    v_tx = generate_scam_victim_tx(victim_1, r2_mule, "RING_002", df_users, r2_start - timedelta(hours=2), tx_id)
-    tx_id += 1
-    p2.append(v_tx)
-
-    all_ring_payments.extend(p2)
-    rings_meta.append({
-        "ring_id": "RING_002",
-        "ring_type": "fan_in_collector",
-        "members": ";".join(r2_feeders + [r2_mule, victim_1]),
-        "start_time": min(p["timestamp"] for p in p2),
-        "end_time": max(p["timestamp"] for p in p2)
-    })
-
-    # --- RING 003: Sequential Chain (Days 45 - 47) ---
-    r3_members = reserve(5)
-    all_fraud_user_ids.extend(r3_members)
-    for u in r3_members:
-        df_users.loc[df_users["user_id"] == u, "user_role"] = "ring_member"
-    r3_start = start_date + timedelta(days=46, hours=19)
-    p3, tx_id = generate_chain_ring("RING_003", r3_members, df_users, r3_start, tx_id)
-    all_ring_payments.extend(p3)
-    rings_meta.append({
-        "ring_id": "RING_003",
-        "ring_type": "linear_chain",
-        "members": ";".join(r3_members),
-        "start_time": min(p["timestamp"] for p in p3),
-        "end_time": max(p["timestamp"] for p in p3)
-    })
-
-    # --- RING 004: Inbound Star Hub (Days 58 - 62) ---
-    r4_hub = reserve(1)[0]
-    r4_spokes = reserve(6)
-    all_fraud_user_ids.extend(r4_spokes + [r4_hub])
-    df_users.loc[df_users["user_id"] == r4_hub, "user_role"] = "mule"
-    for u in r4_spokes:
-        df_users.loc[df_users["user_id"] == u, "user_role"] = "ring_member"
-    r4_start = start_date + timedelta(days=60, hours=11)
-    p4, tx_id = generate_star_ring("RING_004", r4_hub, r4_spokes, df_users, r4_start, tx_id, direction="inbound")
-    all_ring_payments.extend(p4)
-    rings_meta.append({
-        "ring_id": "RING_004",
-        "ring_type": "star_hub",
-        "members": ";".join([r4_hub] + r4_spokes),
-        "start_time": min(p["timestamp"] for p in p4),
-        "end_time": max(p["timestamp"] for p in p4)
-    })
-
-    # --- RING 005 (RING_HELDOUT): Held-Out Test Window (Day 80+) ---
-    # Strictly occurs within the last 15% window (Day 76.5 - Day 90)
-    r5_members = reserve(5)
-    all_fraud_user_ids.extend(r5_members)
-    for u in r5_members:
-        df_users.loc[df_users["user_id"] == u, "user_role"] = "ring_member"
-    r5_start = start_date + timedelta(days=82, hours=15)
-    p5, tx_id = generate_loop_ring("RING_HELDOUT", r5_members, df_users, r5_start, tx_id)
-    all_ring_payments.extend(p5)
-    rings_meta.append({
-        "ring_id": "RING_HELDOUT",
-        "ring_type": "heldout_circular_loop",
-        "members": ";".join(r5_members),
-        "start_time": min(p["timestamp"] for p in p5),
-        "end_time": max(p["timestamp"] for p in p5)
-    })
-
-    # Apply identity-fragment collisions across fraud participants
-    apply_identity_sharing(df_users, all_fraud_user_ids, num_clusters=4)
-
-    # --- RING_SLEEPER: synthetic-identity cluster + sleeper batch (PRD F1/F4/F15) ---
-    # Accounts created within days of each other on a handful of shared devices,
-    # phones and addresses; they pay each other small amounts on a regular rhythm
-    # through training, then bust out together inside the held-out window.
-    sl_members = reserve(14)
-    sl_cashout = reserve(2)
-    sl_payments, tx_id = generate_sleeper_ring(
-        "RING_SLEEPER", sl_members, sl_cashout, df_users, start_date, tx_id
-    )
-    all_ring_payments.extend(sl_payments)
-    rings_meta.append({
-        "ring_id": "RING_SLEEPER",
-        "ring_type": "synthetic_identity_sleeper",
-        "members": ";".join(sl_members + sl_cashout),
-        "start_time": min(p["timestamp"] for p in sl_payments),
-        "end_time": max(p["timestamp"] for p in sl_payments),
-    })
-
-    # --- RING_MULE_HO: held-out mule chain in two waves + scam victim ---
-    # Wave 1 moves money through six accounts within minutes. Four days later a
-    # scam victim pays the chain's entry mule and wave 2 reuses the same mules,
-    # so an analyst confirmation on wave 1 can catch wave 2 before cash-out.
-    mc_members = reserve(6)
-    mc_victim = reserve(1)[0]
-    for u in mc_members:
-        df_users.loc[df_users["user_id"] == u, "user_role"] = "mule"
-    df_users.loc[df_users["user_id"] == mc_victim, "user_role"] = "victim"
-    w1_start = start_date + timedelta(days=79, hours=11, minutes=random.randint(0, 50))
-    w1, tx_id = generate_chain_ring("RING_MULE_HO", mc_members, df_users, w1_start, tx_id)
-    w2_start = start_date + timedelta(days=84, hours=16, minutes=random.randint(0, 50))
-    v_tx = generate_scam_victim_tx(mc_victim, mc_members[1], "RING_MULE_HO", df_users, w2_start, tx_id)
-    tx_id += 1
-    w2, tx_id = generate_chain_ring(
-        "RING_MULE_HO", mc_members[1:], df_users, w2_start + timedelta(minutes=2), tx_id
-    )
-    mc_payments = w1 + [v_tx] + w2
-    all_ring_payments.extend(mc_payments)
-    rings_meta.append({
-        "ring_id": "RING_MULE_HO",
-        "ring_type": "heldout_mule_chain",
-        "members": ";".join(mc_members + [mc_victim]),
-        "start_time": min(p["timestamp"] for p in mc_payments),
-        "end_time": max(p["timestamp"] for p in mc_payments),
-    })
-
-    return all_ring_payments, rings_meta, tx_id
-
-
-def generate_sleeper_ring(ring_id, members, cashout, df_users, start_date, tx_counter_start):
-    """Synthetic-identity cluster that sleeps in lockstep, then busts out.
-
-    - signups within ~3 days (day 48-51), sharing 3 devices, 2 phones, 2 addresses
-    - every 2 days from day 54 to day 82, at ~21:00, a few tiny intra-cluster payments
-    - day 86: every member pays the collector (members[0]) within ~90 minutes,
-      the collector forwards to two cash-out accounts within minutes
-    """
-    signup_base = start_date + timedelta(days=48)
-    devices = [f"DEV_SYN_{i:02d}" for i in range(1, 4)]
-    phones = [f"+9190000{random.randint(10000, 99999)}" for _ in range(2)]
-    addresses = [
-        "Flat 12, Lotus Residency, Ring Road, Pune - 411001",
-        "Flat 14, Lotus Residency, Ring Road, Pune - 411001",
-    ]
-    ips = [f"10.9.{random.randint(1, 250)}.{random.randint(2, 250)}" for _ in range(2)]
-    for i, uid in enumerate(members + cashout):
+    # Tag roles in df_users
+    for uid in all_fraud_accounts:
         idx = df_users.index[df_users["user_id"] == uid][0]
-        signup = signup_base + timedelta(hours=random.uniform(0, 72))
-        df_users.at[idx, "signup_timestamp"] = signup.strftime("%Y-%m-%d %H:%M:%S")
-        df_users.at[idx, "device_id"] = devices[i % len(devices)]
-        df_users.at[idx, "phone"] = phones[i % len(phones)]
-        df_users.at[idx, "address"] = addresses[i % len(addresses)]
-        df_users.at[idx, "ip_address"] = ips[i % len(ips)]
-        df_users.at[idx, "user_role"] = "mule" if uid in cashout or uid == members[0] else "ring_member"
+        if df_users.at[idx, "user_role"] == "normal":
+            df_users.at[idx, "user_role"] = "ring_member"
 
+    # Add camouflage payments for 60% of fraud accounts
+    all_users_list = list(df_users["user_id"].values)
+    camo_payments, tx_id = add_camouflage_payments(
+        ring_accounts=list(all_fraud_accounts),
+        user_meta=user_meta,
+        contacts_map=population.contacts,
+        all_users=all_users_list,
+        base_start_date=start_date,
+        sim_days=sim_days,
+        tx_counter_start=tx_id,
+        camouflage_ratio=config.ring_camouflage_ratio,
+        tx_count_range=config.camouflage_tx_range,
+    )
+    payments.extend(camo_payments)
+
+    return payments, specs, tx_id
+
+
+def generate_dataset(config: SimulatorConfig = DEFAULT_CONFIG) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Generates the full Simulator v2 synthetic dataset."""
+    set_seed(config.random_seed)
+
+    print(f"Generating synthetic population ({config.num_users} accounts)...")
+    population = Population(config)
+    df_users = population.generate()
+
+    tx_id = 1
+
+    # Step 1: Fraud rings (45-60 instances)
+    print("Generating randomized fraud ring families and novel held-out rings...")
+    fraud_payments, ring_specs, tx_id = generate_all_rings_v2(df_users, population, config, tx_counter_start=tx_id)
+
+    # Step 2: Benign look-alike groups (80-120 groups)
+    print("Generating hard-negative benign look-alike groups (80-120 groups)...")
     user_meta = df_users.set_index("user_id").to_dict("index")
-    payments = []
-    tx_id = tx_counter_start
+    # Benign groups can use users who are not ring members
+    non_ring_users = set(df_users[df_users["user_role"] == "normal"]["user_id"].values)
+    benign_gen = BenignGroupGenerator(config, df_users, user_meta, non_ring_users)
+    benign_payments, benign_meta, tx_id = benign_gen.generate_all(tx_counter_start=tx_id)
 
-    def pay(sender, receiver, amount, when):
-        nonlocal tx_id
-        payments.append({
-            "transaction_id": f"TX_{tx_id:07d}",
-            "timestamp": when.strftime("%Y-%m-%d %H:%M:%S"),
-            "sender": sender,
-            "receiver": receiver,
-            "amount": round(float(amount), 2),
-            "device_id": user_meta[sender]["device_id"],
-            "ip_address": user_meta[sender]["ip_address"],
-            "is_fraud": 1,
-            "ring_id": ring_id,
-        })
-        tx_id += 1
+    # Step 3: Background normal traffic
+    target_normal = max(100, config.target_payments - len(fraud_payments) - len(benign_payments))
+    print(f"Generating background normal traffic (~{target_normal} payments)...")
+    synthetic = {m for s in ring_specs if s.family == "synthetic_sleeper" for m in s.members}
+    normal_gen = NormalTrafficGenerator(config, population, exclude=synthetic)
+    normal_payments, tx_id = normal_gen.generate(target_count=target_normal, tx_counter_start=tx_id)
 
-    # Sleeper rhythm: small, regular, intra-cluster
-    for day in range(54, 83, 2):
-        base = start_date + timedelta(days=day, hours=21)
-        for _ in range(4):
-            s, r = random.sample(members, 2)
-            pay(s, r, random.uniform(120, 420), base + timedelta(minutes=random.randint(0, 20), seconds=random.randint(0, 59)))
+    # Step 4: Combine all payments, sort chronologically, and re-number TX IDs
+    all_payments = fraud_payments + benign_payments + normal_payments
+    df_payments = pd.DataFrame(all_payments)
+    df_payments["dt"] = pd.to_datetime(df_payments["timestamp"])
+    df_payments = df_payments.sort_values(by="dt", kind="stable").reset_index(drop=True)
+    df_payments.drop(columns=["dt"], inplace=True)
+    # Keep everything inside the simulated timeline (multi-wave rings can overrun it).
+    sim_end = pd.Timestamp(config.base_start_date + timedelta(days=config.sim_days))
+    df_payments = df_payments[pd.to_datetime(df_payments["timestamp"]) < sim_end].reset_index(drop=True)
+    df_payments["transaction_id"] = [f"TX_{i+1:07d}" for i in range(len(df_payments))]
 
-    # Bust-out: fan-in to the collector, then a fast cash-out
-    collector = members[0]
-    bust = start_date + timedelta(days=86, hours=13, minutes=random.randint(0, 30))
-    total = 0.0
-    last = bust
-    for m in members[1:]:
-        when = bust + timedelta(minutes=random.randint(1, 90), seconds=random.randint(0, 59))
-        amt = random.uniform(3200, 6400)
-        total += amt
-        last = max(last, when)
-        pay(m, collector, amt, when)
-    hop = last
-    for j, c in enumerate(cashout):
-        hop += timedelta(minutes=random.randint(2, 6))
-        pay(collector, c, total * (0.48 if j == 0 else 0.46), hop)
-    return payments, tx_id
-
-
-# ==========================================
-# 6. VALIDATION AND INTEGRITY CHECKS
-# ==========================================
-def validate_data(df_users, df_payments, df_rings, heldout_start_time):
-    """
-    Runs automated integrity verification against the PRD rules.
-    """
-    print("\n" + "=" * 50)
-    print("RUNNING RINGBREAKER SIMULATOR QUALITY CHECKS")
-    print("=" * 50)
-
-    # 1. Null Checks
-    assert df_users.isnull().sum().sum() == 0, "Error: Missing values found in users.csv"
-    assert df_payments[["transaction_id", "timestamp", "sender", "receiver", "amount", "is_fraud"]].isnull().sum().sum() == 0, \
-        "Error: Missing required fields in payments.csv"
-
-    # 2. Graph Self-Loop Check
-    self_tx = df_payments[df_payments["sender"] == df_payments["receiver"]]
-    assert len(self_tx) == 0, "Error: Detected transactions where sender == receiver"
-
-    # 3. Label Consistency
-    fraud_without_ring = df_payments[(df_payments["is_fraud"] == 1) & (df_payments["ring_id"].isnull())]
-    normal_with_ring = df_payments[(df_payments["is_fraud"] == 0) & (df_payments["ring_id"].notnull())]
-    assert len(fraud_without_ring) == 0, "Error: Fraudulent transactions missing ring_id"
-    assert len(normal_with_ring) == 0, "Error: Normal transactions must have ring_id = None"
-
-    # 4. User Existence
-    all_users = set(df_users["user_id"])
-    all_senders = set(df_payments["sender"])
-    all_receivers = set(df_payments["receiver"])
-    assert all_senders.issubset(all_users), "Error: Unregistered sender found in payments"
-    assert all_receivers.issubset(all_users), "Error: Unregistered receiver found in payments"
-
-    # 5. Chronological Order
-    tx_times = pd.to_datetime(df_payments["timestamp"])
-    assert tx_times.is_monotonic_increasing, "Error: payments.csv is not chronologically sorted"
-
-    # 6. Held-Out Ring Temporal Isolation
-    ts_sorted = pd.to_datetime(df_payments["timestamp"]).sort_values()
-    heldout_start_time = ts_sorted.iloc[0] + (ts_sorted.iloc[-1] - ts_sorted.iloc[0]) * 0.85
-    heldout_txs = df_payments[df_payments["ring_id"].isin(["RING_HELDOUT", "RING_MULE_HO"])]
-    earliest_heldout = pd.to_datetime(heldout_txs["timestamp"]).min()
-    assert earliest_heldout >= heldout_start_time, (
-        f"Error: RING_HELDOUT leaked into training partition! "
-        f"Earliest: {earliest_heldout}, Limit: {heldout_start_time}"
+    # Tag benign look-alike payments with their group (evaluation metadata only).
+    df_payments = tag_benign_groups(df_payments, benign_meta)
+    df_benign = pd.DataFrame(
+        [{"group_id": g["group_id"], "type": g["type"], "members": ";".join(g["members"])} for g in benign_meta]
     )
 
-    # 7. Summary Metrics
-    total_tx = len(df_payments)
-    fraud_tx = int(df_payments["is_fraud"].sum())
-    norm_tx = total_tx - fraud_tx
-    fraud_pct = (fraud_tx / total_tx) * 100
+    # No account may transact before it exists.
+    fix_signups(df_users, df_payments, config)
 
-    print(f"Total Users:                 {len(df_users):,}")
-    print(f"Total Transactions:          {total_tx:,}")
-    print(f"Normal Transactions:         {norm_tx:,}")
-    print(f"Fraudulent Transactions:     {fraud_tx:,}")
-    print(f"Fraud Transaction Ratio:     {fraud_pct:.2f}%")
-    print(f"Total Planted Rings:         {len(df_rings)}")
-    print(f"Dataset Date Range:          {df_payments['timestamp'].min()} to {df_payments['timestamp'].max()}")
-    print("\nTransactions per Ring:")
-    for rid, count in df_payments[df_payments["ring_id"].notnull()]["ring_id"].value_counts().items():
-        print(f"  - {rid:15s}: {count:3d} transactions")
-    print("=" * 50)
-    print("ALL INTEGRITY CHECKS PASSED SUCCESSFULLY!\n")
+    # Step 5: Convert ring specs to DataFrame; split labels come from actual timestamps.
+    df_rings = rings_to_dataframe(ring_specs)
+    df_rings = resync_ring_windows(df_rings, df_payments, config)
+
+    # Step 6: Apply label noise (label_observed)
+    df_payments = apply_label_noise(
+        df_payments,
+        fraud_unlabelled_rate=config.fraud_unlabelled_rate,
+        normal_labelled_fraud_rate=config.normal_labelled_fraud_rate,
+        seed=config.random_seed,
+    )
+
+    # Step 7: Automated validation checks
+    heldout_threshold = pd.Timestamp(config.base_start_date + timedelta(days=config.held_out_start_day))
+    validate_simulator_data(df_users, df_payments, df_rings, config, heldout_threshold)
+
+    df_payments.attrs["benign_groups"] = df_benign
+    return df_users, df_payments, df_rings
 
 
-# ==========================================
-# 7. MAIN ENTRYPOINT
-# ==========================================
-def main():
-    parser = argparse.ArgumentParser(description="RingBreaker Synthetic Payment Generator")
-    parser.add_argument("--users", type=int, default=NUM_USERS, help="Total number of users to generate")
-    parser.add_argument("--transactions", type=int, default=NUM_TRANSACTIONS, help="Total normal transactions")
-    parser.add_argument("--seed", type=int, default=RANDOM_SEED, help="Random seed for reproducibility")
+def tag_benign_groups(df_payments: pd.DataFrame, benign_meta: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Mark payments made inside a benign look-alike group (both parties in the group)."""
+    group_of: Dict[str, str] = {}
+    for g in benign_meta:
+        for m in g["members"]:
+            group_of[m] = g["group_id"]
+    s_group = df_payments["sender"].map(group_of)
+    r_group = df_payments["receiver"].map(group_of)
+    same = s_group.notna() & (s_group == r_group) & (df_payments["is_fraud"] == 0)
+    df_payments["group_id"] = s_group.where(same, None)
+    return df_payments
+
+
+def fix_signups(df_users: pd.DataFrame, df_payments: pd.DataFrame, config: SimulatorConfig) -> None:
+    """Move any signup that is later than the account's first payment to before it.
+
+    Receivers and group members are drawn without regard to signup time, so
+    without this ~1/3 of accounts would transact before they exist — an
+    artefact a model could learn from.
+    """
+    ts = pd.to_datetime(df_payments["timestamp"])
+    first = pd.concat([
+        pd.DataFrame({"acc": df_payments["sender"], "ts": ts}),
+        pd.DataFrame({"acc": df_payments["receiver"], "ts": ts}),
+    ]).groupby("acc")["ts"].min()
+    rng = np.random.default_rng(config.random_seed + 7)
+    signup = pd.to_datetime(df_users["signup_timestamp"])
+    earliest = pd.Timestamp(config.base_start_date - timedelta(days=365))
+    for i, uid in enumerate(df_users["user_id"]):
+        f = first.get(uid)
+        if f is not None and signup.iloc[i] > f - pd.Timedelta(hours=1):
+            new = max(earliest, f - pd.Timedelta(hours=float(rng.uniform(1, 21 * 24))))
+            df_users.at[df_users.index[i], "signup_timestamp"] = new.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def resync_ring_windows(df_rings: pd.DataFrame, df_payments: pd.DataFrame, config: SimulatorConfig) -> pd.DataFrame:
+    """Recompute each ring's start/end and split from the payments that survived."""
+    ts = pd.to_datetime(df_payments["timestamp"])
+    t0, t1 = ts.min(), ts.max()
+    train_end = t0 + (t1 - t0) * 0.70
+    stream_start = t0 + (t1 - t0) * 0.85
+    fraud = df_payments[df_payments["ring_id"].notna()].assign(_ts=ts)
+    spans = fraud.groupby("ring_id")["_ts"].agg(["min", "max"])
+    keep = []
+    for i, row in df_rings.iterrows():
+        if row["ring_id"] not in spans.index:
+            continue
+        lo, hi = spans.loc[row["ring_id"]]
+        df_rings.at[i, "start_time"] = lo.strftime("%Y-%m-%d %H:%M:%S")
+        df_rings.at[i, "end_time"] = hi.strftime("%Y-%m-%d %H:%M:%S")
+        if hi < train_end:
+            split = "train"
+        elif lo >= stream_start:
+            split = "heldout"
+        elif lo >= train_end and hi < stream_start:
+            split = "validation"
+        else:
+            split = "spans_" + ("heldout" if hi >= stream_start else "validation")
+        df_rings.at[i, "split"] = split
+        keep.append(i)
+    return df_rings.loc[keep].reset_index(drop=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="RingBreaker Synthetic Payment Generator v2")
+    parser.add_argument("--users", type=int, default=NUM_USERS, help="Total accounts")
+    parser.add_argument("--transactions", type=int, default=NUM_TRANSACTIONS, help="Target payments")
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED, help="Random seed")
     parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR, help="Destination directory for CSVs")
     args = parser.parse_args()
 
-    set_seed(args.seed)
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    print(f"Generating synthetic P2P dataset ({args.users} users, ~{args.transactions} txs)...")
-
-    # Step 1: Base Users
-    df_users = generate_users(num_users=args.users, sim_days=SIMULATION_DAYS, start_date=BASE_START_DATE)
-
-    # Step 2: Planted Fraud Rings (Loop, Fan-In, Chain, Star, Held-Out)
-    fraud_payments, rings_meta, next_tx_id = generate_all_rings(df_users, start_date=BASE_START_DATE, tx_counter_start=1)
-
-    # Step 3: Normal Payments
-    normal_payments = generate_normal_transactions(
-        df_users, target_count=args.transactions, start_date=BASE_START_DATE, sim_days=SIMULATION_DAYS
+    cfg = SimulatorConfig(
+        num_users=args.users,
+        target_payments=args.transactions,
+        random_seed=args.seed,
+        output_dir=args.output_dir,
     )
 
-    # Step 4: Merge, Sort, and Re-index IDs to preserve chronological ordering
-    all_payments = fraud_payments + normal_payments
-    df_payments = pd.DataFrame(all_payments)
-    df_payments["dt"] = pd.to_datetime(df_payments["timestamp"])
-    df_payments.sort_values(by="dt", inplace=True)
-    df_payments.drop(columns=["dt"], inplace=True)
-    
-    # Re-number transaction IDs chronologically
-    df_payments["transaction_id"] = [f"TX_{i+1:07d}" for i in range(len(df_payments))]
-    df_rings = pd.DataFrame(rings_meta)
+    os.makedirs(cfg.output_dir, exist_ok=True)
+    df_users, df_payments, df_rings = generate_dataset(cfg)
 
-    # Step 5: Run Automated Integrity Verification
-    heldout_threshold = BASE_START_DATE + timedelta(days=HELD_OUT_START_DAY)
-    validate_data(df_users, df_payments, df_rings, heldout_threshold)
-
-    # Step 6: Save Clean CSV Outputs
-    users_path = os.path.join(args.output_dir, "users.csv")
-    payments_path = os.path.join(args.output_dir, "payments.csv")
-    rings_path = os.path.join(args.output_dir, "rings.csv")
+    users_path = os.path.join(cfg.output_dir, "users.csv")
+    payments_path = os.path.join(cfg.output_dir, "payments.csv")
+    rings_path = os.path.join(cfg.output_dir, "rings.csv")
 
     df_users.to_csv(users_path, index=False)
     df_payments.to_csv(payments_path, index=False)
     df_rings.to_csv(rings_path, index=False)
+    df_payments.attrs["benign_groups"].to_csv(os.path.join(cfg.output_dir, "benign_groups.csv"), index=False)
 
-    print(f"CSVs successfully written to '{args.output_dir}/':")
-    print(f"  1. {users_path}")
-    print(f"  2. {payments_path}")
-    print(f"  3. {rings_path}")
+    print(f"Simulator v2 CSVs successfully written to '{cfg.output_dir}/':")
+    print(f"  1. {users_path} ({len(df_users):,} rows)")
+    print(f"  2. {payments_path} ({len(df_payments):,} rows)")
+    print(f"  3. {rings_path} ({len(df_rings):,} rows)")
 
 
 if __name__ == "__main__":

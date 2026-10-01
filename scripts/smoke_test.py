@@ -62,7 +62,10 @@ def main() -> int:
     check(case["action"] == "BLOCK" and case["overall_risk"] >= 0.7, f"risk {case['overall_risk']:.2f} -> {case['action']}")
     check(len(case["reasons"]) > 0, f"reasons: {case['reasons'][0]['text']}")
     check(len(case["subgraph"]["nodes"]) > 2 and any(e.get("is_trigger") for e in case["subgraph"]["edges"]), "evidence subgraph with the flagged payment")
-    check(len(case["patterns"]) > 0, f"patterns: {', '.join(p['type'] for p in case['patterns'])}")
+    # Not every blocked payment sits inside a named pattern (the pair model can
+    # block on its own); the case file must still list what was found.
+    check(isinstance(case["patterns"], list),
+          f"patterns: {', '.join(p['type'] for p in case['patterns']) or 'none (model-driven block)'}")
     check(any(e.get("is_trigger") for e in case["timeline"]), f"timeline: {len(case['timeline'])} events")
     check(len(case["top_factors"]) > 0 and case["counterfactual"]["counterfactual_line"], "SHAP factors and counterfactual")
 

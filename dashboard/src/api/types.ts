@@ -58,7 +58,10 @@ export interface Verdict {
   elapsed_ms: number;
 }
 
+export type AlertPeriod = 'live' | 'history';
+
 export interface AlertSummary {
+  period: AlertPeriod;
   alert_id: string;
   status: AlertStatus;
   created_at: string;
@@ -324,6 +327,13 @@ export interface Overview {
   timeline: ({ hour: string } & Partial<Record<Action, number>>)[];
   top_accounts: AccountRow[];
   stream: StreamStatus;
+  /** Pre-stream period scored once for context; in-sample for the model, excluded from metrics. */
+  history: {
+    scored: number;
+    open_alerts: number;
+    action_counts: Partial<Record<Action, number>>;
+    timeline: ({ hour: string } & Partial<Record<Action, number>>)[];
+  };
 }
 
 export interface ClassMetrics {
@@ -359,6 +369,16 @@ export interface EvaluationRun {
   fp: number;
   fn: number;
   per_ring: Record<string, { payments: number; flagged: number; recall: number }>;
+  per_family?: Record<string, { payments: number; flagged: number; recall: number }>;
+  novel_family_recall?: number | null;
+  precision_at_k?: Record<string, number | null>;
+  benign_group_false_positive_rate?: number | null;
+  benign_group_flags?: Record<string, { payments: number; flagged: number }>;
+  new_cases?: { payments: number; tp: number; fp: number; precision: number | null; recall: number | null };
+  confirmation_reach?: {
+    confirmed_accounts: number; confirmed_ring_accounts: number;
+    newly_risky_ring_accounts: number; newly_risky_other_accounts: number;
+  } | null;
   sleeper_lead_time_hours: number | null;
   latency_ms_p50: number | null;
   latency_ms_p95: number | null;

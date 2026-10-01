@@ -22,19 +22,34 @@ import xgboost as xgb
 from sklearn.metrics import average_precision_score
 
 from ringbreaker import config
+from ringbreaker.engine.risk import calibrate, fit_calibration, raw_fused
 from ringbreaker.features.online import PAIR_FEATURE_NAMES
 from ringbreaker.split import timeline_split
 
 VERIFIED_WEIGHT = 5.0  # an analyst-verified outcome counts more than a bulk label
-THRESHOLD = 0.5
+THRESHOLD = 0.30  # canonical alert threshold on calibrated risk
 
 
-def _historical() -> Tuple[pd.DataFrame, pd.Series]:
+def _decision_risk(pair: np.ndarray, anomaly: np.ndarray, calibration: Optional[Dict[str, Any]]) -> np.ndarray:
+    """The engine's model risk (fusion + calibration), without propagated network risk."""
+    return np.array([calibrate(raw_fused(p, a, 0.0), calibration) for p, a in zip(pair, anomaly)])
+
+
+def _historical() -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+    """Training slice (first 70% of the timeline) and the validation slice.
+
+    Mirrors the pipeline: train on the training slice, calibrate decision
+    thresholds on validation, so calibration stays out-of-sample.
+    """
     df = pd.read_csv(config.PAIR_FEATURES_CSV)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     split = timeline_split(df["timestamp"])
-    hist = df.iloc[: split.stream_start_row]
-    return hist[PAIR_FEATURE_NAMES].astype(float), hist["is_fraud"].astype(int)
+    train = df.iloc[: split.train_rows]
+    val = df.iloc[split.train_rows: split.stream_start_row]
+    # Train on what an institution would actually know (noisy observed labels);
+    # ground truth is used only for evaluation below.
+    label = "label_observed" if "label_observed" in train.columns else "is_fraud"
+    return train[PAIR_FEATURE_NAMES].astype(float), train[label].astype(int), val
 
 
 def _ground_truth() -> Dict[str, int]:
@@ -63,8 +78,9 @@ def retrain_with_verified(
     stream_rows: Optional[List[Tuple[str, Dict[str, float]]]] = None,
     current: Optional[xgb.Booster] = None,
     verified_ids: Optional[set] = None,
+    current_calibration: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    X_hist, y_hist = _historical()
+    X_hist, y_hist, val = _historical()
     weights = np.ones(len(X_hist))
     if verified:
         X_ver = pd.DataFrame([f for f, _ in verified])[PAIR_FEATURE_NAMES].astype(float)
@@ -82,6 +98,9 @@ def retrain_with_verified(
     )
     clf.fit(X, y, sample_weight=weights, verbose=False)
     booster = clf.get_booster()
+    val_pair = booster.predict(xgb.DMatrix(val[PAIR_FEATURE_NAMES].astype(float).values, feature_names=PAIR_FEATURE_NAMES))
+    val_anom = val["eif_anomaly"].to_numpy() if "eif_anomaly" in val.columns else np.zeros(len(val))
+    calibration = fit_calibration([raw_fused(p, a, 0.0) for p, a in zip(val_pair, val_anom)])
     config.MODELS_DIR.mkdir(parents=True, exist_ok=True)
     booster.save_model(str(config.RETRAINED_MODEL_PATH))
 
@@ -89,23 +108,27 @@ def retrain_with_verified(
     if stream_rows:
         truth = _ground_truth()
         excluded = verified_ids or set()
-        rows = [(tid, f) for tid, f in stream_rows if tid in truth and tid not in excluded]
+        rows = [r for r in stream_rows if r[0] in truth and r[0] not in excluded]
         if rows:
-            y_eval = np.array([truth[tid] for tid, _ in rows])
+            y_eval = np.array([truth[r[0]] for r in rows])
+            anomaly = np.array([r[2] if len(r) > 2 else 0.0 for r in rows])
             dm = xgb.DMatrix(
-                np.array([[f[n] for n in PAIR_FEATURE_NAMES] for _, f in rows], dtype=np.float32),
+                np.array([[r[1][n] for n in PAIR_FEATURE_NAMES] for r in rows], dtype=np.float32),
                 feature_names=PAIR_FEATURE_NAMES,
             )
             evaluation = {
                 "rows": len(rows),
                 "fraud": int(y_eval.sum()),
-                "after": _metrics(y_eval, booster.predict(dm)),
+                "threshold": "calibrated alert threshold (risk >= 0.30)",
+                "after": _metrics(y_eval, _decision_risk(booster.predict(dm), anomaly, calibration)),
             }
             if current is not None:
-                evaluation["before"] = _metrics(y_eval, current.predict(dm))
+                evaluation["before"] = _metrics(
+                    y_eval, _decision_risk(current.predict(dm), anomaly, current_calibration))
     return {
         "booster": booster,
         "model_path": str(config.RETRAINED_MODEL_PATH),
+        "calibration": calibration,
         "train_rows": int(len(X)),
         "verified_positive": int(sum(1 for _, l in verified if l == 1)),
         "verified_negative": int(sum(1 for _, l in verified if l == 0)),

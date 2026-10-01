@@ -163,11 +163,15 @@ class TransactionGraph:
         self,
         as_of: datetime | str | None = None,
         exclude_transaction_id: str | None = None,
+        since: datetime | str | None = None,
     ) -> list[Payment]:
         cutoff = _as_of_or_max(as_of)
+        since_dt = _as_of_or_max(since)
         out: list[Payment] = []
         for payment in self._payments:
             if not _visible(payment.timestamp, cutoff):
+                continue
+            if since_dt is not None and payment.timestamp < since_dt:
                 continue
             if (
                 exclude_transaction_id is not None
@@ -176,6 +180,27 @@ class TransactionGraph:
                 continue
             out.append(payment)
         return out
+
+    def windowed(
+        self,
+        since: datetime | str | None = None,
+        as_of: datetime | str | None = None,
+    ) -> TransactionGraph:
+        """Create a lightweight TransactionGraph containing only payments between since and as_of."""
+        sub = TransactionGraph()
+        # Copy signup timestamps
+        sub._signup_at = dict(self._signup_at)
+        sub_payments = self.payments(as_of=as_of, since=since)
+        for p in sub_payments:
+            sub.add_payment(
+                p.sender,
+                p.receiver,
+                p.amount,
+                p.timestamp,
+                transaction_id=p.transaction_id,
+                **p.extra,
+            )
+        return sub
 
     def get_out_neighbors(
         self,

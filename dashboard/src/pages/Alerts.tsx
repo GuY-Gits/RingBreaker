@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BellRing } from 'lucide-react';
 import { api } from '../api/client';
-import type { Action, AlertStatus, PatternType } from '../api/types';
+import type { Action, AlertPeriod, AlertStatus, PatternType } from '../api/types';
 import { useApi } from '../hooks/useApi';
 import { ACTION_META, PATTERN_META, fmtTime, money, pct } from '../lib/format';
-import { ActionBadge, Card, EmptyState, Loadable, PatternBadge, StatusBadge } from '../components/ui';
+import { ActionBadge, Badge, Card, EmptyState, Loadable, PatternBadge, StatusBadge } from '../components/ui';
 
 const STATUSES: (AlertStatus | 'all')[] = ['open', 'confirmed', 'cleared', 'all'];
 
@@ -15,7 +15,15 @@ export function AlertsPage() {
   const [action, setAction] = useState<Action | ''>('');
   const [pattern, setPattern] = useState<PatternType | ''>('');
   const [q, setQ] = useState('');
-  const state = useApi(() => api.alerts(status), [status]);
+  const period = (params.get('period') as AlertPeriod | 'all') || 'all';
+  const state = useApi(() => api.alerts(status, period), [status, period]);
+  const setFilter = (next: { status?: string; period?: string }) => {
+    const merged = { status, period, ...next };
+    const out: Record<string, string> = {};
+    if (merged.status !== 'open') out.status = merged.status;
+    if (merged.period !== 'all') out.period = merged.period;
+    setParams(out);
+  };
   const navigate = useNavigate();
 
   const rows = useMemo(() => {
@@ -31,7 +39,7 @@ export function AlertsPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Alerts</h1>
-          <p className="page-sub">Every payment scoring 30% or more opens an alert with a case file. Open one to investigate, then confirm or clear it.</p>
+          <p className="page-sub">Every payment scoring 30% or more opens an alert with a case file. Live alerts come from the stream; historical alerts come from scoring the earlier training and validation periods, which the model partly learned from, so they look cleaner than live results.</p>
         </div>
       </div>
       <Card flush>
@@ -39,7 +47,13 @@ export function AlertsPage() {
           <div className="seg" role="tablist" aria-label="Alert status">
             {STATUSES.map((s) => (
               <button key={s} role="tab" aria-selected={status === s} className={status === s ? 'on' : ''}
-                onClick={() => setParams(s === 'open' ? {} : { status: s })}>{s[0].toUpperCase() + s.slice(1)}</button>
+                onClick={() => setFilter({ status: s })}>{s[0].toUpperCase() + s.slice(1)}</button>
+            ))}
+          </div>
+          <div className="seg" role="tablist" aria-label="Alert period">
+            {(['all', 'live', 'history'] as const).map((p) => (
+              <button key={p} role="tab" aria-selected={period === p} className={period === p ? 'on' : ''}
+                onClick={() => setFilter({ period: p })}>{p === 'all' ? 'Live + historical' : p === 'live' ? 'Live stream' : 'Historical'}</button>
             ))}
           </div>
           <select className="input" value={action} onChange={(e) => setAction(e.target.value as Action | '')} aria-label="Filter by action">
@@ -78,7 +92,7 @@ export function AlertsPage() {
                       <td><ActionBadge action={a.action} /></td>
                       <td className="hide-sm">{a.pattern ? <PatternBadge type={a.pattern} /> : <span className="faint">—</span>}</td>
                       <td className="hide-sm muted truncate" style={{ maxWidth: 300 }}>{a.reasons[0]?.text ?? '—'}</td>
-                      <td><StatusBadge status={a.status} /></td>
+                      <td><div className="row"><StatusBadge status={a.status} />{a.period === 'history' && <Badge tone="neutral">Historical</Badge>}</div></td>
                       <td className="hide-sm mono muted nowrap">{fmtTime(a.created_at)}</td>
                     </tr>
                   ))}

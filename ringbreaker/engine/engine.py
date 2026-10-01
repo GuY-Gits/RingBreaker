@@ -58,10 +58,14 @@ MAX_AMOUNT = 1e9
 # Most specific evidence first when an alert touches several patterns.
 PATTERN_PRIORITY = {"closed_loop": 0, "pass_through_chain": 1, "lockstep_cluster": 2,
                     "fan_in_collector": 3, "shared_device_star": 4}
-TAINT_MIN = 0.5
-TAINT_DECAY = 0.8
-PPR_SCALE = 0.6  # tuned on the held-out stream: 46/46 recall, 2 FPs after one confirm
+# Propagation (F13). Chosen on the validation period (Engine(replay="validation")),
+# never on the held-out stream.
+TAINT_DECAY = 0.8            # risk carried by each laundering hop
+TAINT_MIN_AMOUNT = 1000.0    # confirmed accounts' small everyday payments don't taint
+TAINT_FORWARD_HOURS = 6.0    # a tainted account passes taint on only if it forwards quickly
+PPR_SCALE = 0.6
 PPR_CAP = 0.6
+NEIGHBOUR_WEIGHT = 0.5       # propagated risk of non-confirmed accounts is evidence, not a verdict
 
 
 class EngineError(ValueError):
@@ -85,11 +89,19 @@ def _finite(x: float, default: float = 0.0) -> float:
 
 
 class Engine:
-    def __init__(self, load_history: bool = True, models: Optional[ModelBundle] = None) -> None:
+    def __init__(self, load_history: bool = True, models: Optional[ModelBundle] = None,
+                 replay: str = "heldout", backfill: bool = True) -> None:
+        if replay not in ("heldout", "validation", "history"):
+            raise ValueError("replay must be 'heldout', 'validation' or 'history'")
+        self._replay = replay
+        # Load cached scores for the pre-stream period so the dashboard starts
+        # populated. Only meaningful for the normal held-out replay.
+        self._backfill = backfill and replay == "heldout"
         self.lock = threading.RLock()
         self.models = models or ModelBundle()
         self._load_history = load_history
-        self._base_model = (self.models.booster, self.models.version, self.models.pair_path)
+        self._base_model = (self.models.booster, self.models.version, self.models.pair_path,
+                            self.models.calibration)
         self.reset()
 
     # ════════════════════════════════════════════════════════════════════
@@ -107,6 +119,7 @@ class Engine:
             self.exposure: Dict[str, List[tuple]] = defaultdict(list)
             self.propagated: Dict[str, float] = {}
             self.propagation_source: Dict[str, str] = {}
+            self.tainted_at: Dict[str, datetime] = {}
             self.confirmed_accounts: Set[str] = set()
             self.cleared_accounts: Set[str] = set()
             self.verdicts: List[Dict[str, Any]] = []
@@ -118,10 +131,12 @@ class Engine:
             self.clock: Optional[datetime] = None
             self.stream_rows: List[Dict[str, Any]] = []
             self.history_count = 0
+            self.history_payments: List[Dict[str, Any]] = []
+            self.history_stats: Dict[str, Any] = {"scored": 0, "action_counts": {}, "timeline": []}
             self._since_slow = 0
             self._slow_runs = 0
-            booster, version, path = self._base_model
-            self.models.use_booster(booster, version, path)
+            booster, version, path, calibration = self._base_model
+            self.models.use_booster(booster, version, path, calibration)
             self.model_history.append(
                 {"version": version, "at": None, "kind": "base", "metrics": {}, "path": path}
             )
@@ -148,7 +163,14 @@ class Engine:
         payments["timestamp"] = pd.to_datetime(payments["timestamp"])
         payments = payments.sort_values("timestamp", kind="stable").reset_index(drop=True)
         split = timeline_split(payments["timestamp"])
-        history = payments.iloc[: split.stream_start_row]
+        # "validation" replays the validation period instead of the held-out
+        # stream, for choosing engine parameters without touching held-out data.
+        stream_from, stream_to = {
+            "validation": (split.train_rows, split.stream_start_row),
+            # "history" scores the whole pre-stream period (backfill generation).
+            "history": (0, split.stream_start_row),
+        }.get(self._replay, (split.stream_start_row, len(payments)))
+        history = payments.iloc[:stream_from]
         for row in history.itertuples(index=False):
             self._apply(
                 str(row.transaction_id), str(row.sender), str(row.receiver), float(row.amount),
@@ -158,7 +180,7 @@ class Engine:
             )
         self.history_count = len(history)
         # Stream rows carry only what a payment system would send: no labels.
-        stream = payments.iloc[split.stream_start_row:]
+        stream = payments.iloc[stream_from:stream_to]
         self.stream_rows = [
             {
                 "transaction_id": str(r.transaction_id),
@@ -171,8 +193,80 @@ class Engine:
             }
             for r in stream.itertuples(index=False)
         ]
+        if self._backfill:
+            self._load_backfill(history)
         log.info("Booted: %d accounts, %d historical payments, %d stream payments",
                  len(self.accounts), self.history_count, len(self.stream_rows))
+
+    def _load_backfill(self, history: pd.DataFrame) -> None:
+        """Attach cached scores to the pre-stream payments (see ringbreaker/backfill.py).
+
+        These payments are already in the graph and feature store; this only
+        adds their scored records and alerts, flagged as period="history".
+        The pair model was trained on most of this period, so historical
+        scores are in-sample and are excluded from every reported metric.
+        """
+        from ringbreaker.backfill import load_cache
+
+        cache = load_cache(self.models)
+        if cache is None:
+            log.warning("No valid history backfill cache; run `python -m ringbreaker.backfill`")
+            return
+        scores, alerts, patterns = cache["payments"], cache["alerts"], cache["patterns"]
+        actions: Counter = Counter()
+        buckets: Dict[str, Counter] = defaultdict(Counter)
+        for row in history.itertuples(index=False):
+            tx = str(row.transaction_id)
+            sc = scores.get(tx)
+            if sc is None:
+                continue
+            full = alerts.get(tx)
+            ts = row.timestamp.isoformat()
+            record = {
+                "transaction_id": tx, "timestamp": ts, "sender": str(row.sender), "receiver": str(row.receiver),
+                "amount": round(float(row.amount), 2),
+                "device": str(row.device_id) if pd.notnull(row.device_id) else None,
+                "ip": str(row.ip_address) if pd.notnull(row.ip_address) else None,
+                "source": "history", "risk_score": sc[0], "overall_risk": sc[0],
+                "risk_percent": round(sc[0] * 100, 2),
+                "signals": {"pair_risk": sc[1], "anomaly": sc[2], "coordination": sc[3], "network_risk": 0.0},
+                "sub_scores": {"sender_anomaly": sc[4], "receiver_mule_propensity": sc[5],
+                               "relationship_plausibility": sc[6]},
+                "action": sc[7], "reasons": full["reasons"] if full else [], "alert_id": None, "latency_ms": 0.0,
+            }
+            if full:
+                record.update(_features=full["features"], _shap=full["shap"], _context=full["context"])
+            self.history_payments.append(record)
+            self.payment_index[tx] = record
+            actions[sc[7]] += 1
+            if sc[7] != "ALLOW":
+                buckets[ts[:10]][sc[7]] += 1
+            if sc[7] != "ALLOW":
+                when = row.timestamp.to_pydatetime()
+                for acc in (record["sender"], record["receiver"]):
+                    self.exposure[acc].append((when, sc[0], tx))
+            if full:
+                for p in full["patterns"]:
+                    entry = dict(patterns[p])
+                    entry["active"] = False
+                    self.patterns.setdefault(entry["id"], entry)
+                alert_id = f"ALERT_{tx}"
+                record["alert_id"] = alert_id
+                self.alerts[alert_id] = {
+                    "alert_id": alert_id, "period": "history", "status": "open", "created_at": ts,
+                    "transaction_id": tx, "sender": record["sender"], "receiver": record["receiver"],
+                    "amount": record["amount"], "risk_score": sc[0], "overall_risk": sc[0],
+                    "risk_percent": record["risk_percent"], "action": sc[7],
+                    "sub_scores": record["sub_scores"], "signals": record["signals"],
+                    "pattern": patterns[full["patterns"][0]]["type"] if full["patterns"] else None,
+                    "pattern_ids": list(full["patterns"]), "verdict": None, "_record": record,
+                }
+        self.history_stats = {
+            "scored": len(self.history_payments),
+            "action_counts": dict(actions),
+            "open_alerts": len(self.alerts),
+            "timeline": [{"hour": f"{d}T00:00", **dict(c)} for d, c in sorted(buckets.items())],
+        }
 
     # ════════════════════════════════════════════════════════════════════
     # accounts (F4)
@@ -274,13 +368,13 @@ class Engine:
             anomaly = 0.0 if anomaly is None else anomaly
             lock_s, lock_r = self.lockstep.get(s), self.lockstep.get(r)
             coordination = max((c["score"] for c in (lock_s, lock_r) if c), default=0.0)
-            network = max(self.propagated.get(s, 0.0), self.propagated.get(r, 0.0))
+            network = max(self._network_risk(s), self._network_risk(r))
 
             ctx = self._score_context(s, r, ts, network)
             ctx["anomaly"] = anomaly
             ctx["lockstep_size"] = max((c["size"] for c in (lock_s, lock_r) if c), default=0)
             sub = compute_sub_scores(feats, ctx)
-            overall = fuse(pair_risk, anomaly, coordination, network)
+            overall = fuse(pair_risk, anomaly, coordination, network, self.models.calibration)
             action = action_for(overall, sub)
             signals = {
                 "pair_risk": round(pair_risk, 4),
@@ -317,9 +411,10 @@ class Engine:
             self.payments.append(record)
             self.payment_index[tx_id] = record
             self.latencies.append(latency_ms)
-            for acc in (s, r):
-                self.exposure[acc].append((ts, overall, tx_id))
-            self._taint(s, r, tx_id)
+            if action != "ALLOW":  # exposure = touched a flagged payment
+                for acc in (s, r):
+                    self.exposure[acc].append((ts, overall, tx_id))
+            self._taint(s, r, tx_id, amount, ts)
 
             if action != "ALLOW":
                 record["alert_id"] = self._open_alert(record)
@@ -365,14 +460,16 @@ class Engine:
             if self.clock is None:
                 return
             as_of = self.clock
-            found = detect_all_patterns(self.graph, self.identity, as_of=as_of)
+            since = as_of - timedelta(days=7)
+            g_window = self.graph.windowed(since=since, as_of=as_of)
+            found = detect_all_patterns(g_window, self.identity, as_of=as_of)
             found = [p for p in found if p.pattern_name != "pass_through_chain"]
-            found += detect_pass_through_chains(self.graph, as_of=as_of, maximal_only=True)
+            found += detect_pass_through_chains(g_window, as_of=as_of, maximal_only=True)
             live_ids = set()
             for p in found:
                 entry = self._pattern_entry(p.to_dict())
                 live_ids.add(entry["id"])
-            clusters = detect_lockstep(self.graph, as_of=as_of)
+            clusters = detect_lockstep(self.graph, as_of=as_of, identity_graph=self.identity)
             self.lockstep = {}
             for c in clusters:
                 if not c["suspicious"]:
@@ -451,9 +548,11 @@ class Engine:
     def _open_alert(self, record: Dict[str, Any]) -> str:
         alert_id = f"ALERT_{record['transaction_id']}"
         ts = parse_timestamp(record["timestamp"])
-        fresh = detect_all_patterns(self.graph, self.identity, as_of=ts)
+        since = ts - timedelta(days=7)
+        g_window = self.graph.windowed(since=since, as_of=ts)
+        fresh = detect_all_patterns(g_window, self.identity, as_of=ts)
         fresh = [p for p in fresh if p.pattern_name != "pass_through_chain"]
-        fresh += detect_pass_through_chains(self.graph, as_of=ts, maximal_only=True)
+        fresh += detect_pass_through_chains(g_window, as_of=ts, maximal_only=True)
         parties = {record["sender"], record["receiver"]}
         for p in fresh:
             if parties & set(p.members):
@@ -461,6 +560,7 @@ class Engine:
         patterns = sorted(self.patterns_for(parties), key=lambda p: PATTERN_PRIORITY.get(p["type"], 9))
         alert = {
             "alert_id": alert_id,
+            "period": "history" if record.get("source") == "history" else "live",
             "status": "open",
             "created_at": record["timestamp"],
             "transaction_id": record["transaction_id"],
@@ -481,10 +581,15 @@ class Engine:
         self.alerts[alert_id] = alert
         return alert_id
 
-    def list_alerts(self, status: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+    def list_alerts(self, status: Optional[str] = None, limit: int = 200,
+                    period: Optional[str] = None) -> List[Dict[str, Any]]:
         with self.lock:
-            items = [a for a in self.alerts.values() if status in (None, "all") or a["status"] == status]
-            items.sort(key=lambda a: (a["status"] != "open", -a["overall_risk"], a["created_at"]))
+            items = [a for a in self.alerts.values()
+                     if (status in (None, "all") or a["status"] == status)
+                     and (period in (None, "all") or a["period"] == period)]
+            # Live alerts first, then highest risk.
+            items.sort(key=lambda a: (a["status"] != "open", a["period"] != "live",
+                                      -a["overall_risk"], a["created_at"]))
             return [self.alert_summary(a) for a in items[:limit]]
 
     def alert_summary(self, a: Dict[str, Any]) -> Dict[str, Any]:
@@ -559,19 +664,33 @@ class Engine:
                         g.add_edge(a, b, weight=w)
         return g
 
-    def _taint(self, sender: str, receiver: str, tx_id: str) -> None:
-        """F13, live: money leaving an account with propagated risk carries it on.
+    def _network_risk(self, account: str) -> float:
+        """Confirmed fraud counts fully; risk propagated to a neighbour is weighted evidence."""
+        if account in self.confirmed_accounts:
+            return 1.0
+        return NEIGHBOUR_WEIGHT * self.propagated.get(account, 0.0)
 
-        After a confirmation, payments out of confirmed or strongly-linked
-        accounts pass decayed risk to their receiver, so mules further down a
-        chain are caught even if the analyst confirmed before the chain existed.
+    def _taint(self, sender: str, receiver: str, tx_id: str, amount: float, ts: datetime) -> None:
+        """F13, live: laundered money carries risk on to the next hop.
+
+        Taint follows laundering, not friendship: it passes when a confirmed
+        account moves a non-trivial amount, or when a tainted account forwards
+        money within hours of receiving tainted money (pass-through). A mule's
+        ordinary payments to friends and family do not taint them.
         """
-        src = self.propagated.get(sender, 0.0)
-        if src < TAINT_MIN:
-            return
+        if sender in self.confirmed_accounts:
+            if amount < TAINT_MIN_AMOUNT:
+                return
+            src = 1.0
+        else:
+            since = self.tainted_at.get(sender)
+            if since is None or (ts - since).total_seconds() > TAINT_FORWARD_HOURS * 3600:
+                return
+            src = self.propagated.get(sender, 0.0)
         passed = round(src * TAINT_DECAY, 4)
         if passed > self.propagated.get(receiver, 0.0):
             self.propagated[receiver] = passed
+            self.tainted_at[receiver] = ts
             self.propagation_source[receiver] = f"payment {tx_id} from {sender}"
 
     def _propagate(self, seeds: List[str], alert_id: str) -> List[Dict[str, Any]]:
@@ -584,8 +703,20 @@ class Engine:
         g = self.propagation_graph()
         present = [a for a in seeds if a in g]
         if present:
+            # Restrict PPR to 3-hop neighbourhood of seeds
+            sub_nodes = set(present)
+            frontier = set(present)
+            for _ in range(3):
+                next_frontier = set()
+                for node in frontier:
+                    next_frontier.update(g.neighbors(node))
+                frontier = next_frontier - sub_nodes
+                sub_nodes.update(frontier)
+                if not frontier:
+                    break
+            sub_g = g.subgraph(sub_nodes).copy()
             personalization = {a: 1.0 / len(present) for a in present}
-            ppr = nx.pagerank(g, alpha=0.85, personalization=personalization, weight="weight")
+            ppr = nx.pagerank(sub_g, alpha=0.85, personalization=personalization, weight="weight")
             # Scale PPR mass relative to an average seed: tight ring neighbours
             # (many payments / shared identities with seeds) approach the cap,
             # an ordinary one-off counterparty of a mule stays low.
@@ -775,11 +906,17 @@ class Engine:
             active = [p for p in self.patterns.values() if p["active"]]
             return {
                 "clock": _iso(self.clock),
+                "history": {**self.history_stats,
+                            "open_alerts": sum(1 for a in self.alerts.values()
+                                               if a["period"] == "history" and a["status"] == "open")},
                 "accounts": len(self.accounts),
                 "history_payments": self.history_count,
                 "scored_payments": len(self.payments),
                 "action_counts": dict(actions),
-                "alert_counts": {"open": status.get("open", 0), "confirmed": status.get("confirmed", 0),
+                # "open" is the live queue; historical open alerts are under "history".
+                "alert_counts": {"open": sum(1 for a in self.alerts.values()
+                                             if a["status"] == "open" and a["period"] == "live"),
+                                 "confirmed": status.get("confirmed", 0),
                                  "cleared": status.get("cleared", 0)},
                 "blocked_amount": round(sum(p["amount"] for p in self.payments if p["action"] == "BLOCK"), 2),
                 "held_amount": round(sum(p["amount"] for p in self.payments if p["action"] == "HOLD_RECEIVER"), 2),
@@ -797,7 +934,12 @@ class Engine:
     def recent_payments(self, limit: int = 50, flagged_only: bool = False) -> List[Dict[str, Any]]:
         with self.lock:
             rows = [p for p in self.payments if not flagged_only or p["action"] != "ALLOW"]
-            return [self.public_payment(p) for p in reversed(rows[-limit:])]
+            out = [self.public_payment(p) for p in reversed(rows[-limit:])]
+            if len(out) < limit:  # top up with the most recent historical payments
+                hist = [p for p in self.history_payments[-(limit * 20):]
+                        if not flagged_only or p["action"] != "ALLOW"]
+                out += [self.public_payment(p) for p in reversed(hist[-(limit - len(out)):])]
+            return out
 
     def list_patterns(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
         with self.lock:
@@ -825,11 +967,12 @@ class Engine:
         with self.lock:
             verified = [(self.payment_index[t]["_features"], label)
                         for t, label in self.verified_labels.items() if t in self.payment_index]
-            stream_rows = [(p["transaction_id"], p["_features"]) for p in self.payments]
+            stream_rows = [(p["transaction_id"], p["_features"], p["signals"]["anomaly"]) for p in self.payments]
             version = f"1.{len(self.model_history)}.{len(verified)}"
             result = retrain_with_verified(verified, version, stream_rows, current=self.models.booster,
+                                           current_calibration=self.models.calibration,
                                            verified_ids=set(self.verified_labels))
-            self.models.use_booster(result.pop("booster"), version, result["model_path"])
+            self.models.use_booster(result.pop("booster"), version, result["model_path"], result["calibration"])
             entry = {"version": version, "at": _iso(self.clock), "kind": "retrain", **result}
             self.model_history.append(entry)
             return entry

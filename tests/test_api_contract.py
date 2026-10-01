@@ -22,13 +22,13 @@ def client():
 
 @pytest.fixture(scope="module")
 def alert_id(client):
-    """Step the stream until the first BLOCK alert fires."""
-    for _ in range(40):
+    """Step the stream until the first alert fires."""
+    for _ in range(80):
         client.post("/api/stream/step", params={"n": 50})
-        blocked = [a for a in client.get("/alerts").json() if a["action"] == "BLOCK"]
-        if blocked:
-            return blocked[0]["alert_id"]
-    pytest.fail("stream produced no BLOCK alert")
+        alerts = client.get("/alerts", params={"period": "live"}).json()
+        if alerts:
+            return alerts[0]["alert_id"]
+    pytest.fail("stream produced no alert")
 
 
 def test_health(client):
@@ -78,7 +78,7 @@ def test_register_account(client):
 
 
 def test_alert_queue_and_case_file(client, alert_id):
-    queue = client.get("/alerts").json()
+    queue = client.get("/alerts", params={"period": "live"}).json()
     risks = [a["overall_risk"] for a in queue]
     assert risks == sorted(risks, reverse=True)
     case = client.get(f"/alerts/{alert_id}").json()
@@ -138,3 +138,19 @@ def test_retrain_uses_verified_labels(client):
     assert body["verified_positive"] >= 1
     assert body["model_version"] == get_engine().models.version
     assert "after" in body["metrics"]
+
+
+def test_historical_backfill_is_separate_from_live(client):
+    """Pre-stream payments are scored as history; live counters only count the stream."""
+    ov = client.get("/api/overview").json()
+    assert ov["history"]["scored"] == ov["history_payments"] > 0
+    assert ov["scored_payments"] < ov["history"]["scored"]
+    hist = client.get("/alerts", params={"period": "history", "status": "all"}).json()
+    assert hist and all(a["period"] == "history" for a in hist)
+    live = client.get("/alerts", params={"period": "live", "status": "all"}).json()
+    assert all(a["period"] == "live" for a in live)
+    # live alerts are listed before historical ones in the combined queue
+    combined = [a["period"] for a in client.get("/alerts", params={"status": "open"}).json()]
+    assert combined == sorted(combined, key=lambda p: p != "live")
+    case = client.get(f"/alerts/{hist[0]['alert_id']}").json()
+    assert case["payment"]["source"] == "history" and case["subgraph"]["nodes"]

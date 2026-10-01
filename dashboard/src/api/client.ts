@@ -1,6 +1,7 @@
 import type {
   AccountProfile,
   AccountRow,
+  AlertPeriod,
   AlertStatus,
   AlertSummary,
   CaseFile,
@@ -61,7 +62,8 @@ export const api = {
   overview: () => request<Overview>('/overview'),
   recentPayments: (limit = 40, flaggedOnly = false) =>
     request<ScoredPayment[]>(`/payments/recent${qs({ limit, flagged_only: flaggedOnly })}`),
-  alerts: (status: AlertStatus | 'all' = 'open') => request<AlertSummary[]>(`/alerts${qs({ status })}`),
+  alerts: (status: AlertStatus | 'all' = 'open', period: AlertPeriod | 'all' = 'all') =>
+    request<AlertSummary[]>(`/alerts${qs({ status, period })}`),
   caseFile: (id: string) => request<CaseFile>(`/alerts/${encodeURIComponent(id)}`),
   verdict: (id: string, verdict: 'confirm' | 'clear', accounts?: string[], note?: string) =>
     post<VerdictResult>(`/alerts/${encodeURIComponent(id)}/verdict`, { verdict, accounts, note }),

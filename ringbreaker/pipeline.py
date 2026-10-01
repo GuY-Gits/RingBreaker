@@ -29,6 +29,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 from ringbreaker import config
 from ringbreaker.anomaly.eif_model import CalibratedEIF, ExtendedIsolationForest
+from ringbreaker.engine.risk import fit_calibration, raw_fused
 from ringbreaker.features.online import BEHAVIOUR_FEATURE_NAMES, PAIR_FEATURE_NAMES
 from ringbreaker.features.pair_features import build_feature_frame
 from ringbreaker.simulator import generate as sim
@@ -38,20 +39,13 @@ SEED = 42
 
 
 def generate_data(seed: int = SEED) -> None:
-    sim.set_seed(seed)
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    users = sim.generate_users()
-    fraud, rings, _ = sim.generate_all_rings(users, start_date=sim.BASE_START_DATE)
-    normal = sim.generate_normal_transactions(users, target_count=sim.NUM_TRANSACTIONS)
-    payments = pd.DataFrame(fraud + normal)
-    payments["_dt"] = pd.to_datetime(payments["timestamp"])
-    payments = payments.sort_values("_dt", kind="stable").drop(columns="_dt").reset_index(drop=True)
-    payments["transaction_id"] = [f"TX_{i + 1:07d}" for i in range(len(payments))]
-    rings_df = pd.DataFrame(rings)
-    sim.validate_data(users, payments, rings_df, sim.BASE_START_DATE + pd.Timedelta(days=sim.HELD_OUT_START_DAY))
+    cfg = sim.SimulatorConfig(random_seed=seed, output_dir=str(config.DATA_DIR))
+    users, payments, rings_df = sim.generate_dataset(cfg)
     users.to_csv(config.USERS_CSV, index=False)
     payments.to_csv(config.PAYMENTS_CSV, index=False)
     rings_df.to_csv(config.RINGS_CSV, index=False)
+    payments.attrs["benign_groups"].to_csv(config.BENIGN_GROUPS_CSV, index=False)
 
 
 def split_bounds(frame: pd.DataFrame) -> tuple[int, int]:
@@ -62,10 +56,11 @@ def split_bounds(frame: pd.DataFrame) -> tuple[int, int]:
 def train_pair_model(frame: pd.DataFrame) -> Dict[str, Any]:
     train_end, val_end = split_bounds(frame)
     X = frame[PAIR_FEATURE_NAMES].astype(float)
-    y = frame["is_fraud"].astype(int)
-    X_tr, y_tr = X.iloc[:train_end], y.iloc[:train_end]
-    X_va, y_va = X.iloc[train_end:val_end], y.iloc[train_end:val_end]
-    X_te, y_te = X.iloc[val_end:], y.iloc[val_end:]
+    label_col = "label_observed" if "label_observed" in frame.columns else "is_fraud"
+    y_signal = frame[label_col].astype(int)
+    X_tr, y_tr = X.iloc[:train_end], y_signal.iloc[:train_end]
+    X_va, y_va = X.iloc[train_end:val_end], y_signal.iloc[train_end:val_end]
+    X_te, y_te = X.iloc[val_end:], frame["is_fraud"].iloc[val_end:].astype(int)
 
     pos = max(int(y_tr.sum()), 1)
     clf = xgb.XGBClassifier(
@@ -108,6 +103,18 @@ def train_eif(frame: pd.DataFrame) -> Dict[str, Any]:
     return {"train_rows": int(train_end), "features": BEHAVIOUR_FEATURE_NAMES, "trees": 128}
 
 
+def calibrate_on_validation(frame: pd.DataFrame) -> Dict[str, Any]:
+    """Fit alert/block cut-offs on the validation slice (never the held-out stream)."""
+    train_end, val_end = split_bounds(frame)
+    val = frame.iloc[train_end:val_end]
+    booster = xgb.Booster()
+    booster.load_model(str(config.PAIR_MODEL_PATH))
+    pair = booster.predict(xgb.DMatrix(val[PAIR_FEATURE_NAMES].astype(float).values, feature_names=PAIR_FEATURE_NAMES))
+    # Lockstep coordination is computed online only; it is 0 for almost all payments.
+    raw = [raw_fused(p, a, 0.0) for p, a in zip(pair, val["eif_anomaly"])]
+    return fit_calibration(raw)
+
+
 def _safe_metric(fn, y, s) -> float | None:
     try:
         return round(float(fn(y, s)), 4)
@@ -128,14 +135,25 @@ def run(generate: bool = True, seed: int = SEED, evaluate: bool = True) -> Dict[
 
     print("[2/4] Building causal features with the shared online feature store ...")
     frame = build_feature_frame(payments, users, include_behaviour=True)
-    frame[["transaction_id", "timestamp", "sender", "receiver", "is_fraud", "ring_id", *PAIR_FEATURE_NAMES]].to_csv(
-        config.PAIR_FEATURES_CSV, index=False
-    )
+    save_cols = ["transaction_id", "timestamp", "sender", "receiver", "is_fraud"]
+    if "label_observed" in frame.columns:
+        save_cols.append("label_observed")
+    save_cols.extend(["ring_id", *PAIR_FEATURE_NAMES])
+    frame[save_cols].to_csv(config.PAIR_FEATURES_CSV, index=False)
 
     print("[3/4] Training XGBoost pair model (70% train / 15% validation) ...")
     pair_metrics = train_pair_model(frame)
     print("[4/4] Training Extended Isolation Forest behavioural model ...")
     eif_meta = train_eif(frame)
+
+    # Anomaly score per payment (a model output, not a label) — reused by
+    # calibration here and when retraining.
+    with open(config.EIF_MODEL_PATH, "rb") as fh:
+        eif = pickle.load(fh)
+    frame["eif_anomaly"] = eif.score(np.nan_to_num(frame[BEHAVIOUR_FEATURE_NAMES].to_numpy(dtype=np.float64)))
+    calibration = calibrate_on_validation(frame)
+    save_cols.append("eif_anomaly")
+    frame[save_cols].to_csv(config.PAIR_FEATURES_CSV, index=False)
 
     metadata = {
         "model_version": "1.0.0",
@@ -143,9 +161,14 @@ def run(generate: bool = True, seed: int = SEED, evaluate: bool = True) -> Dict[
         "seed": seed,
         "pair_model": {"features": PAIR_FEATURE_NAMES, **pair_metrics},
         "eif": eif_meta,
+        "risk_calibration": calibration,
     }
     config.MODEL_METADATA_PATH.write_text(json.dumps(metadata, indent=2))
     print(json.dumps(pair_metrics, indent=2))
+    from ringbreaker.backfill import run as run_backfill
+
+    print("[+] Scoring the pre-stream period for the dashboard's historical view ...")
+    print(json.dumps(run_backfill()))
     if evaluate:
         from ringbreaker.evaluate import run as run_evaluation
 

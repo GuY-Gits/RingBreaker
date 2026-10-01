@@ -1,6 +1,6 @@
 {
   "model_version": "1.0.0",
-  "trained_at": "2026-09-30T20:49:12.788810+00:00",
+  "trained_at": "2026-09-30T21:57:07.707373+00:00",
   "seed": 42,
   "pair_model": {
     "features": [
@@ -44,16 +44,16 @@
       "receiver_in_out_ratio",
       "sender_time_since_last_incoming"
     ],
-    "train_rows": 5945,
-    "validation_rows": 2059,
-    "heldout_rows": 2107,
-    "train_fraud": 41,
-    "heldout_fraud": 46,
-    "heldout_roc_auc": 0.9926,
-    "heldout_pr_auc": 0.9408
+    "train_rows": 27933,
+    "validation_rows": 8206,
+    "heldout_rows": 11199,
+    "train_fraud": 332,
+    "heldout_fraud": 95,
+    "heldout_roc_auc": 0.9967,
+    "heldout_pr_auc": 0.8052
   },
   "eif": {
-    "train_rows": 5945,
+    "train_rows": 27933,
     "features": [
       "tx_amount",
       "amount_to_prior_avg",
@@ -69,5 +69,13 @@
       "rapid_drain_speed_seconds"
     ],
     "trees": 128
+  },
+  "risk_calibration": {
+    "alert_raw": 0.573323,
+    "block_raw": 0.767143,
+    "alert_budget": 0.01,
+    "block_budget": 0.002,
+    "fitted_on": "validation",
+    "rows": 8206
   }
 }

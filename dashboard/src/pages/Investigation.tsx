@@ -60,6 +60,7 @@ function CaseView({ c, reload }: { c: CaseFile; reload: () => void }) {
           <div>
             <div className="row wrap" style={{ marginBottom: 8 }}>
               <RiskBadge risk={c.overall_risk} /><ActionBadge action={c.action} /><StatusBadge status={c.status} />
+              {p.source === 'history' && <Badge tone="neutral" tip="Scored from the pre-stream period the model was partly trained on">Historical</Badge>}
               {[...new Set(c.patterns.map((x) => x.type))].map((t) => {
                 const n = c.patterns.filter((x) => x.type === t).length;
                 return <Badge key={t} tone={t === 'shared_device_star' ? 'identity' : 'info'}>{PATTERN_META[t].label}{n > 1 ? ` ×${n}` : ''}</Badge>;
