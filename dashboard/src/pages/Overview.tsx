@@ -20,7 +20,7 @@ const ACTION_FILL: Record<Action, string> = {
 
 export function OverviewPage() {
   const { overview } = useOverview();
-  const alerts = useApi(() => api.alerts('open'), []);
+  const alerts = useApi(() => api.alerts('open'), []);  // live first, then historical
   const payments = useApi(() => api.recentPayments(12), []);
   const patterns = useApi(() => api.patterns(), []);
   const graph = useApi(() => api.graph({ limit: 160 }), []);
@@ -49,7 +49,7 @@ export function OverviewPage() {
           <h1 className="page-title">Fraud intelligence</h1>
           <p className="page-sub">
             {o.scored_payments === 0
-              ? `Graph warmed with ${o.history_payments.toLocaleString('en-IN')} historical payments across ${o.accounts.toLocaleString('en-IN')} accounts. Start the stream to score the held-out period live.`
+              ? `${o.history.scored.toLocaleString('en-IN')} historical payments across ${o.accounts.toLocaleString('en-IN')} accounts are scored (${o.history.open_alerts} historical alerts). Start the stream to score the held-back period live.`
               : <>{o.alert_counts.open} alert{o.alert_counts.open === 1 ? '' : 's'} awaiting a decision · {flagged} of {o.scored_payments.toLocaleString('en-IN')} scored payments flagged · {activePatterns} ring pattern{activePatterns === 1 ? '' : 's'} active{topAlert ? <> · highest risk <Link to={`/alerts/${topAlert.alert_id}`} className="mono" style={{ textDecoration: 'underline' }}>{topAlert.transaction_id}</Link> at {pct(topAlert.overall_risk)}</> : null}.</>}
           </p>
         </div>
@@ -59,9 +59,9 @@ export function OverviewPage() {
 
       <div className="grid g-4">
         <Kpi tone="tile-sky" icon={<Radar size={15} />} label="Payments scored" value={o.scored_payments.toLocaleString('en-IN')}
-          note={`${o.stream.position} / ${o.stream.total} held-out · p50 ${o.latency_ms.p50 ?? '—'} ms`} />
+          note={`live: ${o.stream.position} / ${o.stream.total} held-back · +${o.history.scored.toLocaleString('en-IN')} historical`} />
         <Kpi tone="tile-sand" icon={<BellRing size={15} />} label="Open alerts" value={String(o.alert_counts.open)}
-          note={`${o.alert_counts.confirmed} confirmed · ${o.alert_counts.cleared} cleared`} onClick={() => navigate('/alerts')} />
+          note={`live · ${o.history.open_alerts} historical · ${o.alert_counts.confirmed} confirmed`} onClick={() => navigate('/alerts')} />
         <Kpi tone="tile-rose" icon={<Ban size={15} />} label="Value blocked" value={money(o.blocked_amount)}
           note={`${o.action_counts.BLOCK ?? 0} blocked · ${money(o.held_amount)} held at receiver`} />
         <Kpi tone="tile-mint" icon={<Shapes size={15} />} label="Active ring patterns" value={String(activePatterns)}
@@ -69,7 +69,7 @@ export function OverviewPage() {
       </div>
 
       <div className="grid g-main">
-        <Card title="Alert queue" sub="Open alerts, highest risk first" flush
+        <Card title="Alert queue" sub="Open alerts: live stream first, then historical, highest risk first" flush
           action={<Link to="/alerts" className="card-link">All alerts <ArrowRight size={13} /></Link>}>
           <Loadable state={alerts}>
             {(list) => list.length === 0 ? (
@@ -81,16 +81,16 @@ export function OverviewPage() {
                   <span className="list-title">{a.transaction_id}</span>
                   <div className="list-sub truncate">{a.sender} → {a.receiver} · {money(a.amount)}{a.reasons[0] ? ` · ${a.reasons[0].text}` : ''}</div>
                 </span>
-                <span className="row">{a.pattern && <span className="hide-sm"><PatternBadge type={a.pattern} /></span>}<ActionBadge action={a.action} /></span>
+                <span className="row">{a.period === 'history' && <span className="badge tone-neutral hide-sm">Historical</span>}{a.pattern && <span className="hide-sm"><PatternBadge type={a.pattern} /></span>}<ActionBadge action={a.action} /></span>
               </Link>
             ))}
           </Loadable>
         </Card>
 
-        <Card title="Decisions" sub="Adaptive action per scored payment (F11)">
+        <Card title="Decisions" sub={o.scored_payments ? 'Adaptive action per live payment (F11)' : 'Historical period (before the live stream)'}>
           <DecisionMix o={o} />
           <div className="divider" />
-          <div className="section-label">Flagged payments by stream hour</div>
+          <div className="section-label">{o.scored_payments ? 'Flagged payments by stream hour' : 'Flagged payments by day (historical)'}</div>
           <ActivityChart o={o} />
         </Card>
       </div>
@@ -172,17 +172,19 @@ function StartCallout() {
 }
 
 function DecisionMix({ o }: { o: OverviewData }) {
-  const total = o.scored_payments || 1;
+  // Live decisions once the stream has started; the historical period before that.
+  const counts = o.scored_payments ? o.action_counts : o.history.action_counts;
+  const total = (o.scored_payments || o.history.scored) || 1;
   return (
     <div className="stack" style={{ gap: 12 }}>
       <div className="stacked-bar" role="img" aria-label="Share of payments per action">
-        {ACTION_ORDER.map((a) => <span key={a} style={{ width: `${((o.action_counts[a] ?? 0) / total) * 100}%`, background: ACTION_FILL[a] }} />)}
+        {ACTION_ORDER.map((a) => <span key={a} style={{ width: `${((counts[a] ?? 0) / total) * 100}%`, background: ACTION_FILL[a] }} />)}
       </div>
       <div className="grid g-2" style={{ gap: 8 }}>
-        {ACTION_ORDER.filter((a) => a !== 'REVIEW' || o.action_counts.REVIEW).map((a) => (
+        {ACTION_ORDER.filter((a) => a !== 'REVIEW' || counts.REVIEW).map((a) => (
           <div key={a} className="row-between" style={{ fontSize: 13 }}>
             <span className="row"><i className="lg-dot" style={{ background: ACTION_FILL[a] }} />{ACTION_META[a].label}</span>
-            <span className="mono">{(o.action_counts[a] ?? 0).toLocaleString('en-IN')}</span>
+            <span className="mono">{(counts[a] ?? 0).toLocaleString('en-IN')}</span>
           </div>
         ))}
       </div>
@@ -191,7 +193,10 @@ function DecisionMix({ o }: { o: OverviewData }) {
 }
 
 function ActivityChart({ o }: { o: OverviewData }) {
-  const data = useMemo(() => o.timeline.slice(-48), [o.timeline]);
+  const data = useMemo(
+    () => (o.scored_payments ? o.timeline : o.history.timeline).slice(-48),
+    [o.scored_payments, o.timeline, o.history.timeline],
+  );
   if (!data.length) return <div className="muted" style={{ fontSize: 13 }}>No stream activity yet.</div>;
   const flaggedOf = (d: (typeof data)[number]) => (d.BLOCK ?? 0) + (d.HOLD_RECEIVER ?? 0) + (d.WARN_SENDER ?? 0) + (d.REVIEW ?? 0);
   const max = Math.max(1, ...data.map(flaggedOf));
@@ -210,7 +215,7 @@ function ActivityChart({ o }: { o: OverviewData }) {
         <line x1="0" x2="100" y1="40" y2="40" stroke="var(--line-strong)" strokeWidth="0.3" />
       </svg>
       <div className="row-between muted mono" style={{ fontSize: 11 }}>
-        <span>{fmtTime(data[0].hour)}</span><span>max {max}/h</span><span>{fmtTime(data[data.length - 1].hour)}</span>
+        <span>{fmtTime(data[0].hour)}</span><span>max {max}</span><span>{fmtTime(data[data.length - 1].hour)}</span>
       </div>
     </div>
   );

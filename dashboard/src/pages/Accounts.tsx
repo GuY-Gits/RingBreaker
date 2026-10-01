@@ -23,7 +23,7 @@ export function AccountsPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Accounts</h1>
-          <p className="page-sub">Ranked by current risk: the higher of recent exposure (riskiest payment touched in the last 72h) and risk propagated from confirmed fraud.</p>
+          <p className="page-sub">Ranked by current risk: the higher of recent exposure (riskiest flagged payment touched in the last 72h) and risk propagated from confirmed fraud.</p>
         </div>
       </div>
       <Card flush>

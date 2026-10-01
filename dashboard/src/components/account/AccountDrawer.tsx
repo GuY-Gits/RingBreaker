@@ -39,7 +39,7 @@ function AccountDrawer({ id, onClose, onOpen }: { id: string; onClose: () => voi
                 <RiskRing risk={a.risk} size={84} label="account risk" />
                 <div className="stack" style={{ gap: 6, flex: 1 }}>
                   <div className="row wrap"><AccountStatusBadge status={a.status} />{a.lockstep && <Badge tone="info">Lockstep cluster · {a.lockstep.size}</Badge>}</div>
-                  <ScoreBar label="Exposure (72h)" value={a.exposure_risk} hint="Highest risk of any payment this account touched in the last 72 hours of stream time." />
+                  <ScoreBar label="Exposure (72h)" value={a.exposure_risk} hint="Highest risk of any flagged payment this account touched in the last 72 hours of stream time." />
                   <ScoreBar label="Propagated" value={a.propagated_risk} hint="Risk spread from analyst-confirmed fraud." fill="fill-identity" />
                 </div>
               </div>

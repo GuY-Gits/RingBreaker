@@ -81,7 +81,7 @@ export function LearningPage() {
             <Card title="Model versions" sub="Each retrain is evaluated on held-out stream payments nobody verified (ground truth used for reporting only)">
               <div className="table-wrap">
                 <table className="table">
-                  <thead><tr><th>Version</th><th>Kind</th><th>Stream time</th><th className="num">Train rows</th><th className="num">Verified +/−</th><th>Held-out before → after (threshold 0.5)</th></tr></thead>
+                  <thead><tr><th>Version</th><th>Kind</th><th>Stream time</th><th className="num">Train rows</th><th className="num">Verified +/−</th><th>Held-out before → after (at alert threshold)</th></tr></thead>
                   <tbody>
                     {s.model_history.map((m) => (
                       <tr key={m.version + m.kind}>
@@ -150,7 +150,15 @@ function MetricsDelta({ before, after }: { before?: ClassMetrics; after: ClassMe
   );
 }
 
+const FAMILY_LABEL: Record<string, string> = {
+  closed_loop: 'Closed loop', mule_chain: 'Mule chain', fan_in_collector: 'Fan-in collector',
+  device_farm_star: 'Device farm', scam_victim_mule: 'Scam victim → mule', synthetic_sleeper: 'Synthetic sleeper',
+  slow_chain: 'Slow chain (novel)', distributed_device_ring: 'Distributed-device ring (novel)',
+};
+
 function EvalBlock({ title, run, extra }: { title: string; run: EvaluationRun; extra?: string }) {
+  const families = run.per_family ?? run.per_ring;
+  const reach = run.confirmation_reach;
   return (
     <div className="card" style={{ padding: 16, boxShadow: 'none', background: 'var(--surface-2)' }}>
       <div className="row-between"><strong>{title}</strong>{extra && <Badge tone="ok">{extra}</Badge>}</div>
@@ -159,13 +167,33 @@ function EvalBlock({ title, run, extra }: { title: string; run: EvaluationRun; e
         <Metric label="Recall" value={pct(run.recall, 1)} />
         <Metric label="False-positive rate" value={pct(run.false_positive_rate, 2)} />
         <Metric label="Flagged / fraud" value={`${run.flagged} / ${run.fraud_payments}`} />
+        {run.precision_at_k?.['p@25'] != null && (
+          <Metric label="Precision, top 25" value={pct(run.precision_at_k['p@25'])} tip="Share of the 25 highest-risk payments that are fraud" />
+        )}
+        {run.novel_family_recall != null && (
+          <Metric label="Novel-family recall" value={pct(run.novel_family_recall)} tip="Ring shapes that never appear in training" />
+        )}
+        {run.benign_group_false_positive_rate != null && (
+          <Metric label="Look-alike FPR" value={pct(run.benign_group_false_positive_rate, 2)} tip="Flag rate on honest groups built to mimic fraud patterns" />
+        )}
         <Metric label="Sleeper lead time" value={run.sleeper_lead_time_hours != null ? `${num(run.sleeper_lead_time_hours, 0)} h` : '—'} tip="Lockstep cluster first flagged → first bust-out payment" />
         <Metric label="Latency p50 / p95" value={`${run.latency_ms_p50} / ${run.latency_ms_p95} ms`} />
       </div>
-      <div className="section-label" style={{ marginTop: 14 }}>Recall per planted ring</div>
-      {Object.entries(run.per_ring).map(([ring, r]) => (
-        <div key={ring} className="row-between" style={{ fontSize: 13, padding: '3px 0' }}>
-          <span className="mono">{ring}</span><span className="mono">{r.flagged}/{r.payments} · {pct(r.recall)}</span>
+      {reach && (
+        <>
+          <div className="section-label" style={{ marginTop: 14 }}>Confirmation reach (accounts)</div>
+          <div className="muted" style={{ fontSize: 13 }}>
+            {reach.confirmed_ring_accounts} of {reach.confirmed_accounts} confirmed accounts are real ring accounts;
+            afterwards {reach.newly_risky_ring_accounts} more ring accounts and {reach.newly_risky_other_accounts} other
+            accounts crossed 30% risk.
+            {run.new_cases && <> On new cases (payments not involving a confirmed account): precision {pct(run.new_cases.precision)}, recall {pct(run.new_cases.recall)}.</>}
+          </div>
+        </>
+      )}
+      <div className="section-label" style={{ marginTop: 14 }}>Recall by fraud family</div>
+      {Object.entries(families).map(([fam, r]) => (
+        <div key={fam} className="row-between" style={{ fontSize: 13, padding: '3px 0' }}>
+          <span>{FAMILY_LABEL[fam] ?? fam}</span><span className="mono">{r.flagged}/{r.payments} · {pct(r.recall)}</span>
         </div>
       ))}
     </div>

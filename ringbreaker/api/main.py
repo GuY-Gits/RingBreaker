@@ -143,8 +143,9 @@ def register_account(req: AccountRequest) -> Dict[str, Any]:
 
 @router.get("/alerts")
 def alerts(status: Literal["open", "confirmed", "cleared", "all"] = "open",
+           period: Literal["live", "history", "all"] = "all",
            limit: int = Query(200, ge=1, le=1000)) -> List[Dict[str, Any]]:
-    return get_engine().list_alerts(status=status, limit=limit)
+    return get_engine().list_alerts(status=status, limit=limit, period=period)
 
 
 @router.get("/alerts/{alert_id}")

@@ -1,8 +1,9 @@
 """F8: pass-through chain detector.
 
 Looks for money hopping through 3–6 accounts with strictly increasing timestamps
-inside a bounded window (default: 60 minutes — the PRD's "within minutes"). Search is bounded DFS from each
-account; it does not enumerate the whole graph.
+inside a bounded window (default 6 hours), each hop forwarding 85–100% of the
+previous amount. Wider windows mostly match ordinary traffic. Search is a
+bounded DFS from each account; it does not enumerate the whole graph.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from ringbreaker.patterns.result import PatternResult, graph_to_subgraph
 
 DEFAULT_MIN_ACCOUNTS = 3
 DEFAULT_MAX_ACCOUNTS = 6
-DEFAULT_WINDOW = timedelta(minutes=60)
+DEFAULT_WINDOW = timedelta(hours=6)
+DEFAULT_MIN_HOP_RATIO = 0.85  # each hop forwards 85-100% of what it received
 MAX_PATHS_PER_SOURCE = 50
 
 
@@ -29,7 +31,8 @@ def detect_pass_through_chains(
     min_accounts: int = DEFAULT_MIN_ACCOUNTS,
     max_accounts: int = DEFAULT_MAX_ACCOUNTS,
     window: timedelta = DEFAULT_WINDOW,
-    amount_slack: float | None = 0.15,
+    amount_slack: float | None = 1.0 - DEFAULT_MIN_HOP_RATIO,
+    allow_split: bool = False,
     maximal_only: bool = False,
 ) -> list[PatternResult]:
     """Detect ordered payment paths A -> B -> ... of length min..max accounts."""
@@ -52,6 +55,7 @@ def detect_pass_through_chains(
             max_hops=max_accounts - 1,
             window=window,
             amount_slack=amount_slack,
+            allow_split=allow_split,
         ):
             members = _members(path_payments)
             key = tuple(members)
@@ -90,6 +94,7 @@ def _walk(
     max_hops: int,
     window: timedelta,
     amount_slack: float | None,
+    allow_split: bool = True,
 ) -> Iterator[list[Payment]]:
     stack: list[tuple[list[Payment], set[str]]] = []
     for first in by_sender.get(source, []):
@@ -109,18 +114,22 @@ def _walk(
                 continue
             if nxt.receiver in used:
                 continue
-            if not _amount_ok(last, nxt, amount_slack):
+            if not _amount_ok(last, nxt, amount_slack, allow_split=allow_split):
                 continue
             stack.append((path + [nxt], used | {nxt.receiver}))
 
 
-def _amount_ok(prev: Payment, nxt: Payment, slack: float | None) -> bool:
-    """Allow the next hop to be within slack of the previous amount."""
+def _amount_ok(prev: Payment, nxt: Payment, slack: float | None, allow_split: bool = False) -> bool:
+    """Laundered money only shrinks along a chain (mules skim a cut), so the
+    next hop must forward between (1 - slack) and 100% of the previous amount.
+    Symmetric tolerance matched far too much ordinary traffic. ``allow_split``
+    also accepts a hop forwarding a part (>= 35%) of the amount."""
     if prev.amount <= 0 or nxt.amount <= 0:
         return False
     if slack is None:
         return True
-    return (1.0 - slack) * prev.amount - 1e-9 <= nxt.amount <= (1.0 + slack) * prev.amount + 1e-9
+    min_factor = min(0.35, 1.0 - slack) if allow_split else (1.0 - slack)
+    return min_factor * prev.amount - 1e-9 <= nxt.amount <= prev.amount + 1e-9
 
 
 def _members(path: list[Payment]) -> list[str]:

@@ -79,6 +79,8 @@ def build_feature_frame(df_payments: pd.DataFrame, df_users: pd.DataFrame, inclu
             "is_fraud": int(row.is_fraud),
             "ring_id": row.ring_id if pd.notnull(row.ring_id) else "",
         }
+        if hasattr(row, "label_observed"):
+            record["label_observed"] = int(row.label_observed)
         record.update(state.pair_features(p))
         if include_behaviour:
             record.update(state.behaviour_features(p))

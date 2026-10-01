@@ -20,7 +20,7 @@ The repository ships with generated data and trained models, so no training is
 needed. To regenerate everything (about 40 s):
 
 ```bash
-make data       # simulate → features → XGBoost → EIF → held-out evaluation
+make data       # simulate → features → XGBoost → EIF → historical backfill → held-out evaluation
 ```
 
 For frontend development with hot reload, run `make api` and `make dashboard`
@@ -28,21 +28,31 @@ together, then open <http://localhost:5173/app>.
 
 ## Demo script (PRD flow)
 
-1. **Overview**: the graph is warmed with the first 85% of the timeline. Click
-   **Start stream** to replay the held-out 15% through the live scoring path.
-2. The stream **pauses automatically on the first BLOCK**, currently the planted
-   synthetic-identity sleeper ring. Click **Open case**.
+1. **Overview**: the training and validation periods (first 85% of the
+   timeline: 5,000 accounts, ~36,000 payments) are already scored and shown as
+   **historical** alerts, decisions and risky accounts. Set the speed to
+   80–200/s and click **Start stream** to play only the held-back ~11,000
+   payments live. Historical results are for context: the model was trained
+   on most of that period, so they are excluded from every reported metric.
+2. **Alerts** fill up as rings act; honest look-alikes (households sharing a
+   device, rent collectors, trip splits) and some ordinary payments also
+   appear — the alert threshold is set to a 1% analyst-review budget.
+   The stream **pauses automatically on each BLOCK**. Click **Open case**.
 3. **Investigation**: the risk decision and reasons, the evidence graph with
-   the flagged payment, highlightable patterns (lockstep cluster, shared-device
-   stars, closed loop), timeline, SHAP factors, counterfactual and party
-   profiles.
-4. **Confirm fraud**: choose the accounts and confirm. Risk spreads to
-   connected accounts within ~50 ms, and the before → after table appears.
-5. **Resume**: the ring's later payments are blocked on propagated risk. Later
-   in the stream, the held-out mule chain alerts; confirming its first hop
-   catches wave 2 and the scam-victim payment.
+   the flagged payment, any detected patterns, timeline, SHAP factors,
+   counterfactual and party profiles.
+4. **Confirm fraud** on a true ring, or **Clear** a false positive — both
+   become verified labels. A confirmation spreads risk to connected accounts
+   (≈50 ms) and the before → after table appears.
+5. **Resume**: payments by confirmed accounts are blocked; mules forwarding
+   tainted money get caught. On 23 Mar the sleeper ring busts out — its
+   lockstep cluster was flagged ~5 days earlier (Patterns page).
 6. **Learning**: **Retrain with verified labels** deploys a new model and shows
-   its held-out before → after metrics, next to the PRD success metrics.
+   its before → after metrics at the alert threshold, next to the PRD
+   success metrics (per-family recall, novel-family recall, look-alike FPR).
+
+See [docs/SIMULATOR_V2_PLAN.md](docs/SIMULATOR_V2_PLAN.md) for how the data is
+generated (personas, hard negatives, ring families, label noise).
 
 The reset button in the top bar rewinds everything.
 

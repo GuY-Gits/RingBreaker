@@ -6,7 +6,7 @@ slow-path lockstep clusters and analyst-propagated risk. Nothing reads labels.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ringbreaker.scoring.action import determine_action
 from ringbreaker.scoring.risk_engine import ANOMALY_WEIGHT, LOCKSTEP_WEIGHT, PAIR_WEIGHT
@@ -97,10 +97,50 @@ def compute_sub_scores(f: Dict[str, float], ctx: Dict[str, Any]) -> Dict[str, fl
     }
 
 
-def fuse(pair: float, anomaly: float, coordination: float, network: float) -> float:
-    """PRD risk engine weights, then noisy-OR with analyst-propagated network risk."""
-    fused = PAIR_WEIGHT * pair + ANOMALY_WEIGHT * anomaly + LOCKSTEP_WEIGHT * coordination
-    return round(_clip(1.0 - (1.0 - _clip(fused)) * (1.0 - _clip(network))), 4)
+ALERT_BUDGET = 0.01   # share of payments analysts can review (alert = ALLOW threshold)
+BLOCK_BUDGET = 0.002  # share of payments the business accepts blocking outright
+
+
+def raw_fused(pair: float, anomaly: float, coordination: float) -> float:
+    """PRD risk-engine weights on the model signals (before calibration)."""
+    return _clip(PAIR_WEIGHT * pair + ANOMALY_WEIGHT * anomaly + LOCKSTEP_WEIGHT * coordination)
+
+
+def fit_calibration(raw_scores, alert_budget: float = ALERT_BUDGET, block_budget: float = BLOCK_BUDGET) -> Dict[str, Any]:
+    """Choose raw-score cut-offs so that, on the validation slice, the top
+    ``alert_budget`` of payments alert and the top ``block_budget`` block.
+
+    Label-free (an analyst-capacity budget), fitted only on validation data.
+    """
+    import numpy as np
+
+    raw = np.asarray(raw_scores, dtype=float)
+    alert = float(np.quantile(raw, 1.0 - alert_budget))
+    block = float(np.quantile(raw, 1.0 - block_budget))
+    block = min(max(block, alert + 1e-3), 0.999)
+    alert = min(alert, block - 1e-3)
+    return {"alert_raw": round(alert, 6), "block_raw": round(block, 6), "alert_budget": alert_budget,
+            "block_budget": block_budget, "fitted_on": "validation", "rows": int(len(raw))}
+
+
+def calibrate(raw: float, calibration: Optional[Dict[str, Any]]) -> float:
+    """Monotone piecewise-linear map so the calibrated cut-offs land on the
+    canonical action thresholds (alert_raw → 0.30, block_raw → 0.70)."""
+    if not calibration:
+        return raw
+    a, b = float(calibration["alert_raw"]), float(calibration["block_raw"])
+    if raw < a:
+        return 0.30 * raw / a if a > 0 else 0.30
+    if raw < b:
+        return 0.30 + 0.40 * (raw - a) / (b - a)
+    return 0.70 + 0.30 * (raw - b) / (1.0 - b) if b < 1 else 0.70
+
+
+def fuse(pair: float, anomaly: float, coordination: float, network: float,
+         calibration: Optional[Dict[str, Any]] = None) -> float:
+    """Calibrated model risk, then noisy-OR with analyst-propagated network risk."""
+    model_risk = calibrate(raw_fused(pair, anomaly, coordination), calibration)
+    return round(_clip(1.0 - (1.0 - _clip(model_risk)) * (1.0 - _clip(network))), 4)
 
 
 def action_for(overall: float, sub: Dict[str, float]) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pickle
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -32,11 +33,18 @@ class ModelBundle:
                 self.eif = pickle.load(fh)
         self.version = version
         self.pair_path = str(pair_path)
+        # Decision thresholds fitted on the validation slice (see engine/risk.py).
+        self.calibration: Optional[Dict] = None
+        if config.MODEL_METADATA_PATH.exists():
+            self.calibration = json.loads(config.MODEL_METADATA_PATH.read_text()).get("risk_calibration")
 
-    def use_booster(self, booster: xgb.Booster, version: str, path: str) -> None:
+    def use_booster(self, booster: xgb.Booster, version: str, path: str,
+                    calibration: Optional[Dict] = None) -> None:
         self.booster = booster
         self.version = version
         self.pair_path = path
+        if calibration is not None:
+            self.calibration = calibration
 
     def _matrix(self, rows: List[Dict[str, float]]) -> xgb.DMatrix:
         arr = np.array([[r[n] for n in PAIR_FEATURE_NAMES] for r in rows], dtype=np.float32)

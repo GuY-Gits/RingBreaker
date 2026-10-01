@@ -27,12 +27,15 @@ CONFIRM_RING = "RING_MULE_HO"
 
 
 def _labels() -> pd.DataFrame:
-    df = pd.read_csv(config.PAYMENTS_CSV, usecols=["transaction_id", "is_fraud", "ring_id", "amount", "timestamp"])
+    cols = ["transaction_id", "is_fraud", "ring_id", "amount", "timestamp"]
+    header = pd.read_csv(config.PAYMENTS_CSV, nrows=0).columns
+    df = pd.read_csv(config.PAYMENTS_CSV, usecols=cols + [c for c in ("group_id",) if c in header])
     return df.set_index("transaction_id")
 
 
 def _run(engine: Engine, labels: pd.DataFrame, confirm_ring: Optional[str]) -> Dict[str, Any]:
     confirmed = None
+    risky_before: set = set()
     lockstep_first: Optional[str] = None
     sleeper = set()
     rings = pd.read_csv(config.RINGS_CSV)
@@ -52,12 +55,33 @@ def _run(engine: Engine, labels: pd.DataFrame, confirm_ring: Optional[str]) -> D
                 and labels.at[out["transaction_id"], "ring_id"] == confirm_ring):
             engine.verdict(out["alert_id"], "confirm")
             confirmed = out["alert_id"]
+            risky_before = {a for a in engine.accounts if engine.account_risk(a) >= 0.3}
+
+    rings = pd.read_csv(config.RINGS_CSV)
+    ring_meta_map = {}
+    for _, r_row in rings.iterrows():
+        rid = r_row.get("ring_id")
+        if rid:
+            family = r_row.get("family", r_row.get("ring_type", "unknown"))
+            variant = r_row.get("variant", "standard")
+            ring_meta_map[rid] = {"family": family, "variant": variant}
 
     rows = []
     for p in engine.payments:
         lab = labels.loc[p["transaction_id"]]
-        rows.append({"flag": p["action"] != "ALLOW", "block": p["action"] == "BLOCK",
-                     "fraud": int(lab["is_fraud"]), "ring": lab["ring_id"] if isinstance(lab["ring_id"], str) else None})
+        r_id = lab["ring_id"] if isinstance(lab["ring_id"], str) else None
+        meta = ring_meta_map.get(r_id, {})
+        rows.append({
+            "transaction_id": p["transaction_id"],
+            "flag": p["action"] != "ALLOW",
+            "block": p["action"] == "BLOCK",
+            "fraud": int(lab["is_fraud"]),
+            "ring": r_id,
+            "family": meta.get("family"),
+            "variant": meta.get("variant"),
+            "risk_score": p.get("overall_risk", 0.0),
+            "group": lab["group_id"] if isinstance(lab.get("group_id"), str) else None,
+        })
     df = pd.DataFrame(rows)
     tp = int((df.flag & (df.fraud == 1)).sum())
     fp = int((df.flag & (df.fraud == 0)).sum())
@@ -67,10 +91,56 @@ def _run(engine: Engine, labels: pd.DataFrame, confirm_ring: Optional[str]) -> D
     for ring, g in df[df.ring.notna()].groupby("ring"):
         per_ring[ring] = {"payments": int(len(g)), "flagged": int(g.flag.sum()),
                           "recall": round(float(g.flag.mean()), 4)}
+    per_family = {}
+    for fam, g in df[df.family.notna()].groupby("family"):
+        per_family[fam] = {
+            "payments": int(len(g)),
+            "flagged": int(g.flag.sum()),
+            "recall": round(float(g.flag.mean()), 4),
+        }
+    novel_df = df[df.variant == "held_out_novel"]
+    novel_recall = round(float(novel_df.flag.mean()), 4) if len(novel_df) > 0 else None
+    # False-positive rate on the benign look-alike groups (hard negatives) vs background.
+    benign_df = df[(df.fraud == 0) & df.group.notna()]
+    background_df = df[(df.fraud == 0) & df.group.isna()]
+    benign_fpr = round(float(benign_df.flag.mean()), 4) if len(benign_df) else None
+    background_fpr = round(float(background_df.flag.mean()), 4) if len(background_df) else None
+    benign_types = {}
+    if config.BENIGN_GROUPS_CSV.exists() and len(benign_df):
+        gtype = dict(pd.read_csv(config.BENIGN_GROUPS_CSV)[["group_id", "type"]].values)
+        for t, g in benign_df.assign(t=benign_df.group.map(gtype)).groupby("t"):
+            benign_types[t] = {"payments": int(len(g)), "flagged": int(g.flag.sum())}
+
+    df_sorted = df.sort_values(by="risk_score", ascending=False)
+    precision_at_k = {}
+    for k in (25, 50, 100):
+        top_k = df_sorted.iloc[:k]
+        precision_at_k[f"p@{k}"] = round(float(top_k.fraud.mean()), 4) if len(top_k) else None
+
     bust = labels[(labels.ring_id == "RING_SLEEPER") & (labels.amount > 1000)]["timestamp"].min()
     lead_hours = None
     if lockstep_first and isinstance(bust, str):
         lead_hours = round((datetime.fromisoformat(bust) - datetime.fromisoformat(lockstep_first)).total_seconds() / 3600, 1)
+    # Propagation acts on accounts, and a confirmed mule's everyday payments are
+    # labelled genuine, so payment-level metrics alone mis-score it. Report
+    # (a) metrics on "new cases" (payments not involving an analyst-confirmed
+    # account, which the account action already covers) and (b) account reach.
+    ring_accounts = {m for ms in rings["members"] for m in str(ms).split(";")}
+    conf = set(engine.confirmed_accounts)
+    involves_conf = df.transaction_id.map(
+        lambda t: engine.payment_index[t]["sender"] in conf or engine.payment_index[t]["receiver"] in conf)
+    new = df[~involves_conf]
+    n_tp = int((new.flag & (new.fraud == 1)).sum())
+    n_fp = int((new.flag & (new.fraud == 0)).sum())
+    new_cases = {"payments": int(len(new)), "tp": n_tp, "fp": n_fp,
+                 "precision": round(n_tp / (n_tp + n_fp), 4) if n_tp + n_fp else None,
+                 "recall": round(n_tp / int((new.fraud == 1).sum()), 4) if int((new.fraud == 1).sum()) else None}
+    reach = None
+    if confirmed:
+        newly = {a for a in engine.accounts if engine.account_risk(a) >= 0.3} - risky_before - conf
+        reach = {"confirmed_accounts": len(conf), "confirmed_ring_accounts": len(conf & ring_accounts),
+                 "newly_risky_ring_accounts": len(newly & ring_accounts),
+                 "newly_risky_other_accounts": len(newly - ring_accounts)}
     lat = sorted(engine.latencies)
     return {
         "payments": len(df),
@@ -79,21 +149,30 @@ def _run(engine: Engine, labels: pd.DataFrame, confirm_ring: Optional[str]) -> D
         "precision": round(tp / (tp + fp), 4) if tp + fp else None,
         "recall": round(tp / (tp + fn), 4) if tp + fn else None,
         "false_positive_rate": round(fp / (fp + tn), 4) if fp + tn else None,
+        "benign_group_false_positive_rate": benign_fpr,
+        "background_false_positive_rate": background_fpr,
+        "benign_group_flags": benign_types,
         "tp": tp, "fp": fp, "fn": fn,
         "per_ring": per_ring,
+        "per_family": per_family,
+        "novel_family_recall": novel_recall,
+        "precision_at_k": precision_at_k,
         "sleeper_lockstep_first_detected": lockstep_first,
         "sleeper_bust_out_start": bust if isinstance(bust, str) else None,
         "sleeper_lead_time_hours": lead_hours,
         "latency_ms_p50": round(lat[len(lat) // 2], 2) if lat else None,
         "latency_ms_p95": round(lat[int(len(lat) * 0.95)], 2) if lat else None,
         "confirmed_alert": confirmed,
+        "new_cases": new_cases,
+        "confirmation_reach": reach,
     }
 
 
 def run() -> Dict[str, Any]:
     labels = _labels()
-    baseline = _run(Engine(), labels, None)
-    confirm = _run(Engine(), labels, CONFIRM_RING)
+    # backfill=False: metrics cover the held-out stream only, never historical scores.
+    baseline = _run(Engine(backfill=False), labels, None)
+    confirm = _run(Engine(backfill=False), labels, CONFIRM_RING)
     extra = (confirm["per_ring"].get(CONFIRM_RING, {}).get("flagged", 0)
              - baseline["per_ring"].get(CONFIRM_RING, {}).get("flagged", 0))
     result = {

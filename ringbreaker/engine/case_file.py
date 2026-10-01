@@ -276,7 +276,7 @@ def counterfactual(engine: "Engine", rec: Dict[str, Any]) -> Dict[str, Any]:
         f["amount"] = amount
         f["log_amount"] = math.log1p(amount)
         pair, _ = engine.models.pair_predict(f)
-        return fuse(pair, sig["anomaly"], sig["coordination"], sig["network_risk"])
+        return fuse(pair, sig["anomaly"], sig["coordination"], sig["network_risk"], engine.models.calibration)
 
     amount = feats["amount"]
     floor = risk_at(1.0)

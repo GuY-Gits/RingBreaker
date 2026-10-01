@@ -19,6 +19,7 @@ DASHBOARD_DIST = Path(os.environ.get("RINGBREAKER_DASHBOARD_DIST", REPO_ROOT / "
 USERS_CSV = DATA_DIR / "users.csv"
 PAYMENTS_CSV = DATA_DIR / "payments.csv"
 RINGS_CSV = DATA_DIR / "rings.csv"
+BENIGN_GROUPS_CSV = DATA_DIR / "benign_groups.csv"
 PAIR_FEATURES_CSV = DATA_DIR / "pair_features.csv"
 
 PAIR_MODEL_PATH = MODELS_DIR / "pair_model.json"
