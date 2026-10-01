@@ -90,7 +90,7 @@ One Python process (FastAPI plus an in-memory engine) and one React dashboard. T
 | **Learning** | Retrain on verified labels with before/after metrics at the alert threshold |
 | **Streaming** | Replay engine with adjustable speed that auto-pauses on every BLOCK |
 | **Dashboard** | Overview, Alerts, Investigation, Network, Patterns, Accounts and Learning views |
-| **Simulation** | Synthetic population with personas, honest look-alikes, label noise and seven ring families |
+| **Simulation** | Synthetic population with personas, honest look-alikes, label noise and six ring families plus held-out novel ones |
 | **Ops** | Dockerfile for Cloud Run, gzip responses, OpenAPI docs, end-to-end smoke test |
 
 ### Fraud ring families covered
@@ -204,8 +204,8 @@ No secrets are required. The demo has no authentication, so do not expose it pub
 
 ## Tech stack
 
-**Backend**: Python, FastAPI, Pydantic, NetworkX, pandas, NumPy, scikit-learn, XGBoost, SHAP-style attributions
-**Frontend**: React, TypeScript, D3, Vite, Vitest
+**Backend**: Python, FastAPI, Pydantic, NetworkX, pandas, NumPy, scikit-learn, XGBoost
+**Frontend**: React, React Router, TypeScript, D3, Vite, Vitest
 **Delivery**: Docker multi-stage build, Google Cloud Run
 
 ## License
