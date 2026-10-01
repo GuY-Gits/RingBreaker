@@ -34,6 +34,9 @@ STREAM_START_FRACTION = TRAIN_FRACTION + VALIDATION_FRACTION
 
 # Slow path (F9): recompute lockstep clusters and named patterns every N payments.
 SLOW_PATH_EVERY = int(os.environ.get("RINGBREAKER_SLOW_PATH_EVERY", "50"))
+# Under load, space slow-path runs so they use at most this share of wall time
+# (0 disables the throttle; at demo rates the every-N rule is what triggers).
+SLOW_PATH_BUDGET = float(os.environ.get("RINGBREAKER_SLOW_PATH_BUDGET", "0.1"))
 
 # Allowed CORS origins for the dashboard dev server; the built dashboard is
 # served from the API origin itself and needs none.

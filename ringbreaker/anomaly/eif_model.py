@@ -133,9 +133,10 @@ class ExtendedIsolationForest:
         X = np.nan_to_num(np.asarray(X, dtype=np.float64), nan=0.0, posinf=1e6, neginf=-1e6)
         if self.scaler_mean is not None and self.scaler_std is not None:
             X = (X - self.scaler_mean) / self.scaler_std
-        paths = np.zeros(X.shape[0])
-        for tree in self.trees:
-            paths += _batch_path_lengths(tree.root, X)
+        flat = getattr(self, "_flat", None)
+        if flat is None or flat["n_trees"] != len(self.trees):
+            flat = self._flat = _flatten_forest(self.trees)
+        paths = _forest_path_lengths(flat, X)
         avg = paths / max(len(self.trees), 1)
         c_denom = c_factor(self.sample_size)
         if c_denom == 0:
@@ -164,6 +165,58 @@ class ExtendedIsolationForest:
         if s_max > s_min:
             return (raw_scores - s_min) / (s_max - s_min)
         return raw_scores
+
+
+def _flatten_forest(trees: List[EIFTree]) -> dict:
+    """Pack every tree into shared arrays so all trees can be routed at once."""
+    normals, inters, left, right, leaf_c, is_leaf, roots = [], [], [], [], [], [], []
+    n_features = None
+
+    def add(node: EIFNode) -> int:
+        nonlocal n_features
+        idx = len(left)
+        left.append(idx), right.append(idx)  # leaves point at themselves
+        is_leaf.append(node.is_leaf)
+        leaf_c.append(c_factor(node.size) if node.is_leaf else 0.0)
+        if node.is_leaf:
+            normals.append(None), inters.append(None)
+        else:
+            normals.append(node.normal_vector), inters.append(node.intercept_point)
+            n_features = len(node.normal_vector)
+            left[idx] = add(node.left)
+            right[idx] = add(node.right)
+        return idx
+
+    for tree in trees:
+        roots.append(add(tree.root))
+    nf = n_features or 1
+    zero = np.zeros(nf)
+    return {
+        "n_trees": len(trees),
+        "roots": np.array(roots, dtype=np.int64),
+        "left": np.array(left, dtype=np.int64),
+        "right": np.array(right, dtype=np.int64),
+        "is_leaf": np.array(is_leaf, dtype=bool),
+        "leaf_c": np.array(leaf_c, dtype=np.float64),
+        "normals": np.array([zero if n is None else n for n in normals]),
+        "inters": np.array([zero if i is None else i for i in inters]),
+    }
+
+
+def _forest_path_lengths(flat: dict, X: np.ndarray) -> np.ndarray:
+    """Sum over trees of the path length of each row (same values as per-tree routing)."""
+    B = X.shape[0]
+    cur = np.broadcast_to(flat["roots"], (B, flat["n_trees"])).copy()
+    depth = np.zeros(cur.shape)
+    while True:
+        active = ~flat["is_leaf"][cur]
+        if not active.any():
+            break
+        d = ((X[:, None, :] - flat["inters"][cur]) * flat["normals"][cur]).sum(axis=2)
+        nxt = np.where(d <= 0, flat["left"][cur], flat["right"][cur])
+        cur = np.where(active, nxt, cur)
+        depth += active
+    return (depth + flat["leaf_c"][cur]).sum(axis=1)
 
 
 def _batch_path_lengths(root: EIFNode, X: np.ndarray) -> np.ndarray:

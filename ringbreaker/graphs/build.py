@@ -299,6 +299,11 @@ class TransactionGraph:
         res.sort(key=lambda p: p.timestamp)
         return res
 
+    def payment_count(self, account_id: str) -> int:
+        """Total payments stored for an account (cheap change detector)."""
+        account_id = str(account_id)
+        return len(self._incoming.get(account_id, ())) + len(self._outgoing.get(account_id, ()))
+
     def get_account_history(
         self,
         account_id: str,

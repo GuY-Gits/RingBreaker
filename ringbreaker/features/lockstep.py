@@ -57,14 +57,24 @@ def account_lockstep_vector(
     account_id: str,
     as_of: datetime | str,
     exclude_transaction_id: str | None = None,
+    cache: dict | None = None,
 ) -> dict[str, float] | None:
     as_of_ts = parse_timestamp(as_of)
     account_id = str(account_id)
+    # The vector only changes when the account gets a payment or its signup
+    # changes, and only grows stale if as_of moves backwards.
+    use_cache = cache is not None and exclude_transaction_id is None
+    if use_cache:
+        key = (graph.payment_count(account_id), graph.get_signup_at(account_id, as_of=as_of_ts))
+        hit = cache.get(account_id)
+        if hit is not None and hit[0] == key and hit[1] <= as_of_ts:
+            return hit[2]
     history = graph.get_account_history(
         account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
     )
     if not history:
         return None
+    all_visible = max(p.timestamp for p in history) <= as_of_ts
     signup = graph.get_signup_at(account_id, as_of=as_of_ts)
     if signup is None:
         signup = min(p.timestamp for p in history)
@@ -76,13 +86,17 @@ def account_lockstep_vector(
     times = sorted(p.timestamp.timestamp() for p in history)
     gaps = np.diff(times) / 3600.0
     median_gap = float(np.median(gaps)) if len(gaps) else 0.0
-    return {
+    vector = {
         "signup_hours": signup.timestamp() / 3600.0,
         "hour_cos": c,
         "hour_sin": s,
         "hour_dispersion": min(dispersion, 3.0),
         "log_median_gap_hours": math.log1p(median_gap),
     }
+    if use_cache and all_visible:
+        # Only reusable if every payment was visible; remember the as_of it was built at.
+        cache[account_id] = (key, as_of_ts, vector)
+    return vector
 
 
 def detect_lockstep(
@@ -94,6 +108,7 @@ def detect_lockstep(
     account_ids: list[str] | None = None,
     active_within_days: int | None = 30,
     identity_graph: Any = None,
+    vector_cache: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Cluster accounts; return one dict per cluster with size >= min_samples."""
     as_of_ts = parse_timestamp(as_of)
@@ -108,7 +123,8 @@ def detect_lockstep(
     rows: list[tuple[str, dict[str, float]]] = []
     for account_id in ids:
         vector = account_lockstep_vector(
-            graph, account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id
+            graph, account_id, as_of=as_of, exclude_transaction_id=exclude_transaction_id,
+            cache=vector_cache,
         )
         if vector is not None:
             rows.append((account_id, vector))

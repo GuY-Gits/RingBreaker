@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any, Dict, Optional
 
 from ringbreaker.engine.engine import Engine, EngineError
@@ -91,12 +92,19 @@ class StreamRunner:
             return None
 
     def _loop(self) -> None:
+        # Pace against a fixed schedule so scoring time doesn't add to the
+        # inter-payment delay (sleeping 1/rate after each score caps the real rate).
+        next_at = time.perf_counter()
         while self.running and self.position < self.total:
             out = self._one()
             if out and out["action"] == "BLOCK" and self.pause_on_block:
                 self.running = False
                 self.last_event = f"Paused on BLOCK: {out['alert_id']}"
                 break
-            self._wake.wait(1.0 / self.rate)
-            self._wake.clear()
+            now = time.perf_counter()
+            next_at = max(next_at + 1.0 / self.rate, now - 1.0)  # don't burst to catch up after a stall
+            delay = next_at - now
+            if delay > 0:
+                self._wake.wait(delay)
+                self._wake.clear()
         self.running = False

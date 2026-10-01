@@ -135,6 +135,9 @@ class Engine:
             self.history_stats: Dict[str, Any] = {"scored": 0, "action_counts": {}, "timeline": []}
             self._since_slow = 0
             self._slow_runs = 0
+            self._slow_cost = 0.0
+            self._slow_last_end = 0.0
+            self._lockstep_cache: Dict[str, tuple] = {}
             booster, version, path, calibration = self._base_model
             self.models.use_booster(booster, version, path, calibration)
             self.model_history.append(
@@ -420,7 +423,7 @@ class Engine:
                 record["alert_id"] = self._open_alert(record)
 
             self._since_slow += 1
-            if self._since_slow >= config.SLOW_PATH_EVERY:
+            if self._since_slow >= config.SLOW_PATH_EVERY and self._slow_path_due():
                 self.run_slow_path()
             return self.public_payment(record)
 
@@ -453,7 +456,24 @@ class Engine:
     # ════════════════════════════════════════════════════════════════════
     # slow path (F8, F15)
     # ════════════════════════════════════════════════════════════════════
+    def _slow_path_due(self) -> bool:
+        """Keep slow-path time under SLOW_PATH_BUDGET of wall time when payments arrive fast."""
+        budget = config.SLOW_PATH_BUDGET
+        if budget <= 0 or self._slow_cost <= 0:
+            return True
+        idle = time.perf_counter() - self._slow_last_end
+        return idle >= self._slow_cost * (1.0 - budget) / budget
+
     def run_slow_path(self) -> None:
+        with self.lock:
+            t0 = time.perf_counter()
+            try:
+                self._run_slow_path()
+            finally:
+                self._slow_last_end = time.perf_counter()
+                self._slow_cost = self._slow_last_end - t0
+
+    def _run_slow_path(self) -> None:
         with self.lock:
             self._since_slow = 0
             self._slow_runs += 1
@@ -469,7 +489,8 @@ class Engine:
             for p in found:
                 entry = self._pattern_entry(p.to_dict())
                 live_ids.add(entry["id"])
-            clusters = detect_lockstep(self.graph, as_of=as_of, identity_graph=self.identity)
+            clusters = detect_lockstep(self.graph, as_of=as_of, identity_graph=self.identity,
+                                       vector_cache=self._lockstep_cache)
             self.lockstep = {}
             for c in clusters:
                 if not c["suspicious"]:
