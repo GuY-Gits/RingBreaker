@@ -17,7 +17,7 @@ Scores every payment as a *sender → receiver pair* before the money moves, exp
 ---
 ## Link to demo
 
-https://ringbreaker-69802996465.asia-south1.run.app/app
+https://ringbreaker.onrender.com/app
 
 ## Why RingBreaker
 
